@@ -1,0 +1,295 @@
+/* Copyright 2023-2026 (c) Michael Bell
+   SPDX-License-Identifier: BSD-3-Clause
+   
+   RAM module for Femto BIO CPU */
+
+`default_nettype none
+
+// 16-bit wide RAM with single read/write port, byte enables on write
+module internal_ram #(parameter RAM_BITS=10) (
+    input clk,
+    input [1:0] wen,
+    input [RAM_BITS-2:0] addr,
+    input [15:0] data_in,
+
+    output reg [15:0] data_out
+);
+
+    parameter INIT_FILE = "ram.hex";
+
+    reg [15:0] ram [0:(1<<(RAM_BITS-1))-1];
+    initial begin
+        $readmemh(INIT_FILE, ram);
+    end
+
+    always @(posedge clk) begin
+        if (wen[0]) ram[addr][7:0] <= data_in[7:0];
+        if (wen[1]) ram[addr][15:8] <= data_in[15:8];
+        data_out <= ram[addr];
+    end
+
+endmodule
+
+// Wrapper module for the internal 16-bit wide RAM to provide a 32-bit interface suitable for the Femto BIO CPU.
+// Normally reads and writes take 2 cycles, but if idle cycles follows an instruction read the next instruction 
+// is cached so it can be fetched without additional wait.
+// Inputs must remain constant while a transaction is in progress
+module femto_ram #(parameter RAM_BITS=10) (
+    input clk,
+    input rst_n,
+
+    input rstrb,    // High to request a read
+    input rinstr,   // High on instruction fetch - in this case
+                    // the data at addr + 4 is cached after this
+                    // read completes so it is available for the 
+                    // next instruction fetch
+
+    input wstrb,    // High to request a write
+    input [3:0] mask,  // Byte-enable mask for writes
+
+    input [RAM_BITS-1:0] addr,  // Address, low 2 bits should be 0 for word (32-bit) accesses.
+    input half,                 // High if accessing a half-word (16 bits), 
+                                // in this case data_out has high and low halfs equal
+                                // and address bit 1 controls which half word is read.
+
+    output rbusy,      // High while a read is in progress
+    output wbusy,      // High while a write is in progress
+    
+    input [31:0] data_in,
+    output reg [31:0] data_out
+);
+
+    localparam STATE_IDLE               = 3'd0;
+    localparam STATE_READ_LOW           = 3'd1;
+    localparam STATE_READ_HIGH          = 3'd2;
+    localparam STATE_PREFETCH_LOW       = 3'd3;
+    localparam STATE_PREFETCH_HIGH      = 3'd4;
+    localparam STATE_WRITE_HIGH         = 3'd5;
+
+    reg [2:0] state;
+    reg [15:0] read_low_data;
+
+    reg cache_valid;
+    reg [RAM_BITS-1:2] cache_addr;
+    reg [31:0] cache_data;
+
+    // TODO: Replace with latch
+    reg [31:0] held_data_out;
+
+    reg [1:0] ram_wen;
+    reg [RAM_BITS-2:0] ram_addr;
+    reg [15:0] ram_data_in;
+    wire [15:0] ram_data_out;
+
+    wire is_cache_addr = (addr[RAM_BITS-1:2] == cache_addr);
+    wire cache_hit = rstrb && rinstr && !half && cache_valid && is_cache_addr;
+    wire prefetch_hit = rstrb && rinstr && !half && (state == STATE_PREFETCH_HIGH) && is_cache_addr;
+    wire read_complete = (state == STATE_READ_HIGH) || (state == STATE_READ_LOW && half) ||
+                         cache_hit || prefetch_hit;
+    wire write_active = (state == STATE_WRITE_HIGH);
+
+    assign rbusy = (rstrb && !read_complete) || (state == STATE_READ_LOW && !half);
+    assign wbusy = wstrb || write_active;
+
+    wire [RAM_BITS-2:0] low_ram_addr = {addr[RAM_BITS-1:2], 1'b0};
+    wire [RAM_BITS-2:0] high_ram_addr = {addr[RAM_BITS-1:2], 1'b1};
+    wire [RAM_BITS-2:0] half_ram_addr = addr[1] ? high_ram_addr : low_ram_addr;
+    wire [RAM_BITS-1:2] next_cache_addr = addr[RAM_BITS-1:2] + 1;
+
+    always @(*) begin
+        ram_wen = 2'b00;
+        ram_addr = addr[RAM_BITS-1:1];
+        ram_data_in = data_in[15:0];
+        data_out = held_data_out;
+
+        if (cache_hit) begin
+            data_out = cache_data;
+        end else if (prefetch_hit) begin
+            data_out = {ram_data_out, cache_data[15:0]};
+        end else if (state == STATE_READ_LOW && half) begin
+            data_out = {ram_data_out, ram_data_out};
+        end else if (state == STATE_READ_HIGH) begin
+            data_out = {ram_data_out, read_low_data};
+        end
+
+        case (state)
+        STATE_IDLE: begin
+            if (wstrb) begin
+                if (|mask[1:0]) begin
+                    ram_addr = low_ram_addr;
+                    ram_wen = mask[1:0];
+                    ram_data_in = data_in[15:0];
+                end else begin
+                    ram_addr = high_ram_addr;
+                    ram_wen = mask[3:2];
+                    ram_data_in = data_in[31:16];
+                end
+            end else if (cache_hit) begin
+                ram_addr = {next_cache_addr, 1'b0};
+            end
+        end
+        STATE_READ_LOW: begin
+            ram_addr = high_ram_addr;
+        end
+        STATE_READ_HIGH: begin
+            ram_addr = {cache_addr, 1'b0};
+        end
+        STATE_PREFETCH_LOW: begin
+            if (wstrb) begin
+                if (|mask[1:0]) begin
+                    ram_addr = low_ram_addr;
+                    ram_wen = mask[1:0];
+                    ram_data_in = data_in[15:0];
+                end else begin
+                    ram_addr = high_ram_addr;
+                    ram_wen = mask[3:2];
+                    ram_data_in = data_in[31:16];
+                end
+            end else if (rstrb) begin
+                ram_addr = addr[RAM_BITS-1:1];
+            end else begin
+                ram_addr = {cache_addr, 1'b1};
+            end
+        end
+        STATE_PREFETCH_HIGH: begin
+            if (wstrb) begin
+                if (|mask[1:0]) begin
+                    ram_addr = low_ram_addr;
+                    ram_wen = mask[1:0];
+                    ram_data_in = data_in[15:0];
+                end else begin
+                    ram_addr = high_ram_addr;
+                    ram_wen = mask[3:2];
+                    ram_data_in = data_in[31:16];
+                end
+            end else if (prefetch_hit) begin
+                ram_addr = {next_cache_addr, 1'b0};
+            end
+        end
+        STATE_WRITE_HIGH: begin
+            ram_addr = high_ram_addr;
+            ram_wen = mask[3:2];
+            ram_data_in = data_in[31:16];
+        end
+        default: begin
+        end
+        endcase
+    end
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            state <= STATE_IDLE;
+            cache_valid <= 1'b0;
+            cache_addr <= 0;
+            read_low_data <= 16'd0;
+            held_data_out <= 32'd0;
+        end else begin
+            case (state)
+            STATE_IDLE: begin
+                if (wstrb) begin
+                    if (is_cache_addr) begin
+                        cache_valid <= 1'b0;
+                    end
+                    if (|mask[1:0] && |mask[3:2]) begin
+                        state <= STATE_WRITE_HIGH;
+                    end
+                end else if (cache_hit) begin
+                    held_data_out <= cache_data;
+                    if (rinstr) begin
+                        state <= STATE_PREFETCH_LOW;
+                        cache_addr <= next_cache_addr;
+                        cache_valid <= 1'b0;
+                    end
+                end else if (rstrb) begin
+                    state <= STATE_READ_LOW;
+                    if (rinstr) begin
+                        cache_addr <= next_cache_addr;
+                        cache_valid <= 1'b0;
+                    end
+                end
+            end
+            STATE_READ_LOW: begin
+                if (half) begin
+                    held_data_out <= {ram_data_out, ram_data_out};
+                    state <= STATE_IDLE;
+                end else begin
+                    read_low_data <= ram_data_out;
+                    state <= STATE_READ_HIGH;
+                end
+            end
+            STATE_READ_HIGH: begin
+                held_data_out <= {ram_data_out, read_low_data};
+                if (rinstr) begin
+                    state <= STATE_PREFETCH_LOW;
+                end else begin
+                    state <= STATE_IDLE;
+                end
+            end
+            STATE_PREFETCH_LOW: begin
+                cache_data[15:0] <= ram_data_out;
+                if (wstrb) begin
+                    if (|mask[1:0] && |mask[3:2]) begin
+                        state <= STATE_WRITE_HIGH;
+                    end else begin
+                        state <= STATE_IDLE;
+                    end
+                end else if (rstrb) begin
+                    state <= STATE_READ_LOW;
+                    if (rinstr) begin
+                        cache_addr <= next_cache_addr;
+                        cache_valid <= 1'b0;
+                    end
+                end else begin
+                    state <= STATE_PREFETCH_HIGH;
+                end
+            end
+            STATE_PREFETCH_HIGH: begin
+                cache_valid <= 1'b1;
+                cache_data[31:16] <= ram_data_out;
+                if (prefetch_hit) begin
+                    held_data_out <= {ram_data_out, cache_data[15:0]};
+                    if (rinstr) begin
+                        state <= STATE_PREFETCH_LOW;
+                        cache_addr <= next_cache_addr;
+                        cache_valid <= 1'b0;
+                    end else begin
+                        state <= STATE_IDLE;
+                    end
+                end else if (wstrb) begin
+                    if (is_cache_addr) begin
+                        cache_valid <= 1'b0;
+                    end
+                    if (|mask[1:0] && |mask[3:2]) begin
+                        state <= STATE_WRITE_HIGH;
+                    end else begin
+                        state <= STATE_IDLE;
+                    end
+                end else if (rstrb) begin
+                    if (rinstr) begin
+                        cache_addr <= next_cache_addr;
+                        cache_valid <= 1'b0;
+                    end
+                    state <= STATE_READ_LOW;
+                end else begin
+                    state <= STATE_IDLE;
+                end
+            end
+            STATE_WRITE_HIGH: begin
+                state <= STATE_IDLE;
+            end
+            default: begin
+                state <= STATE_IDLE;
+            end
+            endcase
+        end
+    end
+
+    internal_ram #(.RAM_BITS(RAM_BITS)) i_ram(
+        .clk(clk),
+        .wen(ram_wen),
+        .addr(ram_addr),
+        .data_in(ram_data_in),
+        .data_out(ram_data_out)
+    );
+
+endmodule

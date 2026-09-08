@@ -40,17 +40,15 @@ module FemtoRV32(
 
    output [31:0] mem_addr,  // address bus
    output [31:0] mem_wdata, // data to be written
-   output        mem_wnext, // active to when next cycle will initiate a write
    output        mem_wstrb, // active to initiate a memory write
    output  [3:0] mem_mask,  // read/write mask for the 4 bytes of each word
    output        mem_half,  // active for 8 or 16-bit read/writes
 
    input  [31:0] mem_rdata, // input lines for both data and instr
    output        mem_rstrb, // active to initiate memory read
+   output        mem_rinstr, // active to indicate instruction fetch
    input         mem_rbusy, // asserted if memory is busy reading value
    input         mem_wbusy, // asserted if memory is busy writing value
-
-   input         interrupt_request,
 
    input         resetn      // set to 0 to reset the processor
 );
@@ -156,9 +154,12 @@ module FemtoRV32(
       aluIn1[24], aluIn1[25], aluIn1[26], aluIn1[27], aluIn1[28], aluIn1[29],
       aluIn1[30], aluIn1[31]} : aluIn1;
 
+   // Rotate support
+   wire [31:0] shifter_in_hi = instr[29] ? shifter_in :
+                               {32{instr[30] & aluIn1[31]}};
+
    /* verilator lint_off WIDTH */
-   wire [31:0] shifter =
-               $signed({instr[30] & aluIn1[31], shifter_in}) >>> aluIn2[4:0];
+   wire [31:0] shifter = {shifter_in_hi, shifter_in} >> aluIn2[4:0];
    /* verilator lint_on WIDTH */
 
    wire [31:0] leftshift = {
@@ -182,7 +183,7 @@ module FemtoRV32(
    always @(*) begin
       (* parallel_case *)
       case(1'b1)
-      funct3Is[0]: aluOut = aluResult;
+      funct3Is[0]: aluOut = aluResult[31:0];
       funct3Is[1]: aluOut = leftshift;
       funct3Is[2]: aluOut = {31'b0, LT};
       funct3Is[3]: aluOut = {31'b0, LTU};
@@ -206,74 +207,6 @@ module FemtoRV32(
         funct3Is[7] & !LTU ; // BGEU
 
    /***************************************************************************/
-   // Interrupt logic, CSR registers and opcodes.
-   /***************************************************************************/
-
-   // Interrupt logic:
-
-   // Remember interrupt requests as they are not checked for every cycle   
-   reg  interrupt_request_sticky;
-   // Interrupt enable and lock logic   
-   wire interrupt = interrupt_request_sticky & mstatus & ~mcause;
-   // Processor accepts interrupts in EXECUTE state.   
-   wire interrupt_accepted = interrupt & state[EXECUTE_bit];        
-
-   // If current interrupt is accepted, there already might be the next one, 
-   // which should not be missed:
-   always @(posedge clk) begin
-     interrupt_request_sticky <= 
-        interrupt_request | (interrupt_request_sticky & ~interrupt_accepted);
-   end
-
-   // Decoder for mret opcode
-   wire interrupt_return = isSYSTEM & funct3Is[0]; // & (instr[31:20]==12'h302);
-
-   // CSRs:
-   reg  [PC_WIDTH-1:0]   mepc;    // The saved program counter.
-   reg                   mstatus; // Interrupt enable
-   reg                   mcause;  // Interrupt cause (and lock)
-   reg  [31:0]           cycles;  // Cycle counter
-
-   always @(posedge clk) begin
-      cycles[15:0] <= cycles[15:0] + 1;
-      if (cycles[15:0] == 16'hffff) cycles[31:16] <= cycles[31:16] + 1;
-   end
-
-   wire sel_mstatus = (instr[31:20] == 12'h300);
-   wire sel_mepc    = (instr[31:20] == 12'h341);
-   wire sel_mcause  = (instr[31:20] == 12'h342);
-   wire sel_cycles  = (instr[31:20] == 12'hC00);
-
-   // Read CSRs:
-   /* verilator lint_off WIDTHEXPAND */
-   wire [31:0] CSR_read =
-     (sel_mstatus ? {28'b0, mstatus, 3'b0}  : 32'b0) |
-     (sel_mepc    ? mepc                    : 32'b0) |
-     (sel_mcause  ? {mcause, 31'b0}         : 32'b0) |
-     (sel_cycles  ? cycles[31:0]            : 32'b0) ;
-   /* verilator lint_on WIDTHEXPAND */
-
-   // Write CSRs: 5 bit unsigned immediate or content of RS1
-   wire [31:0] CSR_modifier = instr[14] ? {27'd0, instr[19:15]} : rs1; 
-
-   /* verilator lint_off UNUSEDSIGNAL */
-   wire [31:0] CSR_write = (instr[13:12] == 2'b10) ? CSR_modifier | CSR_read  :
-                           (instr[13:12] == 2'b11) ? ~CSR_modifier & CSR_read :
-                        /* (instr[13:12] == 2'b01) ? */  CSR_modifier ;
-   /* verilator lint_on UNUSEDSIGNAL */
-
-   always @(posedge clk) begin
-      if(!resetn) begin
-	      mstatus <= 0;
-      end else begin
-         // Execute a CSR opcode
-         if (isSYSTEM & (instr[14:12] != 0) & state[EXECUTE_bit]) begin
-            if (sel_mstatus) mstatus <= CSR_write[3];
-         end
-      end
-   end
-
-   /***************************************************************************/
    // Program counter and branch target computation.
    /***************************************************************************/
 
@@ -289,8 +222,8 @@ module FemtoRV32(
 
    // Branch address comes from the adder
    wire [PC_WIDTH-1:0] PCplusImm = PC + ( instr[3] ? Jimm[PC_WIDTH-1:0] :
-                                            instr[4] ? Uimm[PC_WIDTH-1:0] :
-                                                       Bimm[PC_WIDTH-1:0] );
+                                          instr[4] ? Uimm[PC_WIDTH-1:0] :
+                                                     Bimm[PC_WIDTH-1:0] );
 
    // Destination of load/store comes from the adder
    wire [ADDR_WIDTH-1:0] loadstore_addr = aluPlus[ADDR_WIDTH-1:0];
@@ -301,8 +234,6 @@ module FemtoRV32(
 
    wire [PC_WIDTH-1:0] PC_new =
       isJALR           ? {aluPlus[PC_WIDTH-1:1],1'b0} :
-      interrupt        ? INT_ADDR  :
-      interrupt_return ? mepc      :
       jumpToPCplusImm  ? PCplusImm :
                          PCplus4;
 
@@ -315,7 +246,6 @@ module FemtoRV32(
    /***************************************************************************/
 
    wire [31:0] writeBackData  =
-      (isSYSTEM            ? CSR_read   : 32'b0) |  // SYSTEM
       (isLUI               ? Uimm       : 32'b0) |  // LUI
       (isALU               ? aluOut     : 32'b0) |  // ALUreg, ALUimm
       (isAUIPC             ? PCplusImm  : 32'b0) |  // AUIPC
@@ -406,16 +336,14 @@ module FemtoRV32(
                     (state[EXECUTE_bit] | state[WAIT_ALU_OR_MEM_bit]);
 
    // The memory transaction activate signals.
-   assign mem_rstrb = state[EXECUTE_bit] & ~isStore | state[FETCH_INSTR_bit];
+   assign mem_rstrb = (state[EXECUTE_bit] & ~isStore) | state[FETCH_INSTR_bit];
+   assign mem_rinstr = (state[EXECUTE_bit] & ~isStore & ~isLoad) | state[FETCH_INSTR_bit];
    assign mem_wstrb = state[EXECUTE_bit] & isStore;
 
    // The mask for memory.
    wire isActiveMem = ((state[EXECUTE_bit] | state[WAIT_ALU_OR_MEM_bit]) && isMem);
    assign mem_mask = {4{~isActiveMem}} | loadstore_mask;
    assign mem_half = isActiveMem & !instr[13];
-
-   // Write on next cycle.
-   assign mem_wnext = state[WAIT_INSTR_bit] & !mem_rbusy & (mem_rdata[6:2] == 5'b01000);
 
    wire jumpToPCplusImm = isJAL | isJALR | (isBranch & predicate);
 `ifdef NRV_IS_IO_ADDR
@@ -430,8 +358,7 @@ module FemtoRV32(
          state      <= WAIT_ALU_OR_MEM; // Just waiting for !mem_wbusy
          PC         <= RESET_ADDR[PC_WIDTH-1:0];
          instr      <= 30'd1;  // Invalid op with rd=0, which will set rd to 0.
-         mcause     <= 0;
-      end else
+      end else begin
 
       // See note [1] at the end of this file.
       (* parallel_case *)
@@ -447,14 +374,7 @@ module FemtoRV32(
          end
 
          state[EXECUTE_bit]: begin
-            if (interrupt) begin
-               mepc   <= PCplus4;
-               mcause <= 1;
-            end else if (interrupt_return) begin
-               mcause <= 0;
-            end
             PC <= PC_new;
-
             state <= needToWait ? WAIT_ALU_OR_MEM : WAIT_INSTR;
          end
 
@@ -467,11 +387,11 @@ module FemtoRV32(
          end
 
       endcase
+      end
    end
 
     integer i;
     initial begin
-        cycles = 0;
         for (i = 0; i < 32; i = i + 1)
             registerFile[i] = 0;
     end

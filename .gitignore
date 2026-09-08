@@ -1,0 +1,8 @@
+test/sim_build/*
+test/__pycache__/*
+test/ram.hex
+test/results.xml
+*.ys
+*.asc
+*.bit
+*.log
