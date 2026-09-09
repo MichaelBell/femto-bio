@@ -1,0 +1,20 @@
+MEMORY
+{
+    iram(rwx) : ORIGIN = 0,       LENGTH = 0x400
+}
+SECTIONS
+{
+    .text : { *(.text*) } > iram
+    .data : { 
+        __data_start_unaligned__ = .;
+        . = ALIGN(4);
+        __data_start__ = .;
+        *(.sdata*) *(.data*) 
+        . = ALIGN(4);
+        __data_end__ = .;
+    } > iram
+
+    __StackTop = ORIGIN(iram) + LENGTH(iram);
+    __StackLimit = __StackTop - 0x80;
+    ASSERT(__StackLimit >= __data_end__, "region RAM overflowed")
+}

@@ -35,8 +35,9 @@
 `define NRV_ABI      "ilp32"
 `define NRV_OPTIMIZE "-Os"
 
-module FemtoRV32(
+module FemtoRV32 #(parameter ADDR_WIDTH=10) (
    input         clk,
+   input         resetn,     // set to 0 to reset the processor
 
    output [31:0] mem_addr,  // address bus
    output [31:0] mem_wdata, // data to be written
@@ -50,38 +51,49 @@ module FemtoRV32(
    input         mem_rbusy, // asserted if memory is busy reading value
    input         mem_wbusy, // asserted if memory is busy writing value
 
-   input         resetn      // set to 0 to reset the processor
+   output  [4:0] rd_id,      // Destination register for access to x16+
+   output [31:0] rd_wdata,   // Data to be written to the destination register
+   output  [4:0] rs1_id,     // Source register 1 for access to x16+
+   output  [4:0] rs2_id,     // Source register 2 for access to x16+
+   input  [31:0] rs1_rdata,  // Data returned for source register 1
+   input  [31:0] rs2_rdata,  // Data returned for source register 2
+   output        rd_write,   // asserted if the destination register is being written
+   output        rs1_read,   // asserted if source register 1 is being read
+   output        rs2_read,   // asserted if source register 2 is being read
+   input         reg_wbusy,  // asserted while register write should block
+   input         reg_rbusy   // asserted while register read should block
+
 );
 
-   parameter RESET_ADDR       = 32'h08000000;
-   parameter INT_ADDR         = 32'h00000000;
-   parameter ADDR_WIDTH       = 32;
-   parameter PC_WIDTH         = 32;
+   parameter RESET_ADDR       = 0;
+   parameter PC_WIDTH         = ADDR_WIDTH;
 
- /***************************************************************************/
- // Instruction decoding.
- /***************************************************************************/
+   /***************************************************************************/
+   // Instruction decoding.
+   /***************************************************************************/
 
- // Extracts rd,rs1,rs2,funct3,imm and opcode from instruction.
- // Reference: Table page 104 of:
- // https://content.riscv.org/wp-content/uploads/2017/05/riscv-spec-v2.2.pdf
+   // Extracts rd,rs1,rs2,funct3,imm and opcode from instruction.
+   // Reference: Table page 104 of:
+   // https://content.riscv.org/wp-content/uploads/2017/05/riscv-spec-v2.2.pdf
 
- // The destination register
- wire [4:0] rdId = instr[11:7];
+   // The destination register
+   assign rd_id = instr[11:7];
+   assign rs1_id = mem_rdata[19:15];
+   assign rs2_id = mem_rdata[24:20];
 
- // The ALU function, decoded in 1-hot form (doing so reduces LUT count)
- // It is used as follows: funct3Is[val] <=> funct3 == val
- (* onehot *)
- wire [7:0] funct3Is = 8'b00000001 << instr[14:12];
+   // The ALU function, decoded in 1-hot form (doing so reduces LUT count)
+   // It is used as follows: funct3Is[val] <=> funct3 == val
+   (* onehot *)
+   wire [7:0] funct3Is = 8'b00000001 << instr[14:12];
 
- // The five immediate formats, see RiscV reference (link above), Fig. 2.4 p. 12
- wire [31:0] Uimm = {    instr[31],   instr[30:12], {12{1'b0}}};
- wire [31:0] Iimm = {{21{instr[31]}}, instr[30:20]};
- /* verilator lint_off UNUSED */ // MSBs of SBJimms are not used by addr adder.
- wire [31:0] Simm = {{21{instr[31]}}, instr[30:25],instr[11:7]};
- wire [31:0] Bimm = {{20{instr[31]}}, instr[7],instr[30:25],instr[11:8],1'b0};
- wire [31:0] Jimm = {{12{instr[31]}}, instr[19:12],instr[20],instr[30:21],1'b0};
- /* verilator lint_on UNUSED */
+   // The five immediate formats, see RiscV reference (link above), Fig. 2.4 p. 12
+   wire [31:0] Uimm = {    instr[31],   instr[30:12], {12{1'b0}}};
+   wire [31:0] Iimm = {{21{instr[31]}}, instr[30:20]};
+   /* verilator lint_off UNUSED */ // MSBs of SBJimms are not used by addr adder.
+   wire [31:0] Simm = {{21{instr[31]}}, instr[30:25],instr[11:7]};
+   wire [31:0] Bimm = {{20{instr[31]}}, instr[7],instr[30:25],instr[11:8],1'b0};
+   wire [31:0] Jimm = {{12{instr[31]}}, instr[19:12],instr[20],instr[30:21],1'b0};
+   /* verilator lint_on UNUSED */
 
    // Base RISC-V (RV32I) has only 10 different instructions !
    wire isLoad    =  (instr[6:2] == 5'b00000); // rd <- mem[rs1+Iimm]
@@ -93,7 +105,6 @@ module FemtoRV32(
    wire isBranch  =  (instr[6:2] == 5'b11000); // if(rs1 OP rs2) PC<-PC+Bimm
    wire isJALR    =  (instr[6:2] == 5'b11001); // rd <- PC+4; PC<-rs1+Iimm
    wire isJAL     =  (instr[6:2] == 5'b11011); // rd <- PC+4; PC<-PC+Jimm
-   wire isSYSTEM  =  (instr[6:2] == 5'b11100); // rd <- cycles
 
    wire isALU = isALUimm | isALUreg;
    wire isMem = isLoad | isStore;
@@ -104,12 +115,12 @@ module FemtoRV32(
 
    reg [31:0] rs1;
    reg [31:0] rs2;
-   reg [31:0] registerFile [31:0];
+   reg [31:0] registerFile [15:0];
 
    always @(posedge clk) begin
-     if (writeBack)
-       if (rdId != 0)
-         registerFile[rdId] <= writeBackData;
+     if (writeBack & ~rd_id[4])
+       if (rd_id != 0)
+         registerFile[rd_id[3:0]] <= rd_wdata;
    end
 
    /***************************************************************************/
@@ -245,7 +256,7 @@ module FemtoRV32(
    // The value written back to the register file.
    /***************************************************************************/
 
-   wire [31:0] writeBackData  =
+   assign rd_wdata  =
       (isLUI               ? Uimm       : 32'b0) |  // LUI
       (isALU               ? aluOut     : 32'b0) |  // ALUreg, ALUimm
       (isAUIPC             ? PCplusImm  : 32'b0) |  // AUIPC
@@ -337,7 +348,7 @@ module FemtoRV32(
 
    // The memory transaction activate signals.
    assign mem_rstrb = (state[EXECUTE_bit] & ~isStore) | state[FETCH_INSTR_bit];
-   assign mem_rinstr = (state[EXECUTE_bit] & ~isStore & ~isLoad) | state[FETCH_INSTR_bit];
+   assign mem_rinstr = (state[EXECUTE_bit] & ~isStore & ~isLoad) | state[FETCH_INSTR_bit] | state[WAIT_INSTR_bit];
    assign mem_wstrb = state[EXECUTE_bit] & isStore;
 
    // The mask for memory.
@@ -350,8 +361,31 @@ module FemtoRV32(
    wire needToWait = isLoad |
                      isStore  & `NRV_IS_IO_ADDR(mem_addr) ;
 `else
-   wire needToWait = isLoad | isStore ;
+   wire needToWait = isLoad | isStore | reg_wbusy;
 `endif
+
+   wire rs1_read_reqd = state[WAIT_INSTR_bit] & !mem_rbusy & rs1_id[4] & mem_rdata[2] & mem_rdata[4:3] != 2'b00; // !(AUIPC, LUI, JAL)
+   wire rs2_read_reqd = state[WAIT_INSTR_bit] & !mem_rbusy & rs2_id[4] & mem_rdata[5] & mem_rdata[3:2] == 2'b00; // Store, ALUreg, Branch
+   wire rd_write_reqd = writeBack & rd_id[4];
+
+   reg was_rs1_read;
+   reg was_rs2_read;
+   reg was_rd_write;
+   always @(posedge clk) begin
+      if(!resetn) begin
+         was_rs1_read <= 1'b0;
+         was_rs2_read <= 1'b0;
+         was_rd_write <= 1'b0;
+      end else begin
+         was_rs1_read <= rs1_read_reqd;
+         was_rs2_read <= rs2_read_reqd;
+         was_rd_write <= rd_write_reqd;
+      end
+   end
+
+   assign rs1_read = rs1_read_reqd & ~was_rs1_read;
+   assign rs2_read = rs2_read_reqd & ~was_rs2_read;
+   assign rd_write = rd_write_reqd & ~was_rd_write;
 
    always @(posedge clk) begin
       if(!resetn) begin
@@ -365,9 +399,9 @@ module FemtoRV32(
       case(1'b1)
 
          state[WAIT_INSTR_bit]: begin
-            if(!mem_rbusy) begin // may be high when executing from SPI flash
-               rs1 <= registerFile[mem_rdata[19:15]];
-               rs2 <= registerFile[mem_rdata[24:20]];
+            if (!mem_rbusy && !reg_rbusy) begin // may be high when executing from SPI flash
+               rs1 <= rs1_id[4] ? rs1_rdata : registerFile[rs1_id[3:0]];
+               rs2 <= rs2_id[4] ? rs2_rdata : registerFile[rs2_id[3:0]];
                instr <= mem_rdata[31:2]; // Bits 0 and 1 are ignored (see
                state <= EXECUTE;         // also the declaration of instr).
             end
@@ -425,4 +459,3 @@ endmodule
 // [2] state uses 1-hot encoding (at any time, state has only one bit set to 1).
 // It uses a larger number of bits (one bit per state), but often results in
 // a both more compact (fewer LUTs) and faster state machine.
-

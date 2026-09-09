@@ -15,12 +15,14 @@ module internal_ram #(parameter RAM_BITS=10) (
     output reg [15:0] data_out
 );
 
-    parameter INIT_FILE = "ram.hex";
-
     reg [15:0] ram [0:(1<<(RAM_BITS-1))-1];
+
+`ifdef INIT_FILENAME
+    parameter INIT_FILE = `INIT_FILENAME;
     initial begin
         $readmemh(INIT_FILE, ram);
     end
+`endif
 
     always @(posedge clk) begin
         if (wen[0]) ram[addr][7:0] <= data_in[7:0];
@@ -81,15 +83,18 @@ module femto_ram #(parameter RAM_BITS=10) (
     reg [15:0] ram_data_in;
     wire [15:0] ram_data_out;
 
+    reg rstrb_next;
+    reg wstrb_next;
+
     wire is_cache_addr = (addr[RAM_BITS-1:2] == cache_addr);
     wire cache_hit = rstrb && rinstr && !half && cache_valid && is_cache_addr;
-    wire prefetch_hit = rstrb && rinstr && !half && (state == STATE_PREFETCH_HIGH) && is_cache_addr;
+    wire prefetch_hit = (rstrb || rstrb_next) && rinstr && !half && (state == STATE_PREFETCH_HIGH) && is_cache_addr;
     wire read_complete = (state == STATE_READ_HIGH) || (state == STATE_READ_LOW && half) ||
                          cache_hit || prefetch_hit;
     wire write_active = (state == STATE_WRITE_HIGH);
 
-    assign rbusy = (rstrb && !read_complete) || (state == STATE_READ_LOW && !half);
-    assign wbusy = wstrb || write_active;
+    assign rbusy = ((rstrb || rstrb_next) && !read_complete) || (state == STATE_READ_LOW && !half);
+    assign wbusy = (wstrb || wstrb_next) || write_active;
 
     wire [RAM_BITS-2:0] low_ram_addr = {addr[RAM_BITS-1:2], 1'b0};
     wire [RAM_BITS-2:0] high_ram_addr = {addr[RAM_BITS-1:2], 1'b1};
@@ -135,24 +140,12 @@ module femto_ram #(parameter RAM_BITS=10) (
             ram_addr = {cache_addr, 1'b0};
         end
         STATE_PREFETCH_LOW: begin
-            if (wstrb) begin
-                if (|mask[1:0]) begin
-                    ram_addr = low_ram_addr;
-                    ram_wen = mask[1:0];
-                    ram_data_in = data_in[15:0];
-                end else begin
-                    ram_addr = high_ram_addr;
-                    ram_wen = mask[3:2];
-                    ram_data_in = data_in[31:16];
-                end
-            end else if (rstrb) begin
-                ram_addr = addr[RAM_BITS-1:1];
-            end else begin
+            if (!rstrb || !rinstr || is_cache_addr) begin
                 ram_addr = {cache_addr, 1'b1};
-            end
+            end 
         end
         STATE_PREFETCH_HIGH: begin
-            if (wstrb) begin
+            if (wstrb || wstrb_next) begin
                 if (|mask[1:0]) begin
                     ram_addr = low_ram_addr;
                     ram_wen = mask[1:0];
@@ -183,7 +176,12 @@ module femto_ram #(parameter RAM_BITS=10) (
             cache_addr <= 0;
             read_low_data <= 16'd0;
             held_data_out <= 32'd0;
+            rstrb_next <= 1'b0;
+            wstrb_next <= 1'b0;
         end else begin
+            rstrb_next <= 1'b0;
+            wstrb_next <= 1'b0;
+
             case (state)
             STATE_IDLE: begin
                 if (wstrb) begin
@@ -227,20 +225,14 @@ module femto_ram #(parameter RAM_BITS=10) (
             end
             STATE_PREFETCH_LOW: begin
                 cache_data[15:0] <= ram_data_out;
-                if (wstrb) begin
-                    if (|mask[1:0] && |mask[3:2]) begin
-                        state <= STATE_WRITE_HIGH;
-                    end else begin
-                        state <= STATE_IDLE;
-                    end
-                end else if (rstrb) begin
+                state <= STATE_PREFETCH_HIGH;
+                wstrb_next <= wstrb;
+                if (rstrb && rinstr && !is_cache_addr) begin
+                    cache_addr <= next_cache_addr;
+                    cache_valid <= 1'b0;
                     state <= STATE_READ_LOW;
-                    if (rinstr) begin
-                        cache_addr <= next_cache_addr;
-                        cache_valid <= 1'b0;
-                    end
                 end else begin
-                    state <= STATE_PREFETCH_HIGH;
+                    rstrb_next <= rstrb;
                 end
             end
             STATE_PREFETCH_HIGH: begin
@@ -255,7 +247,7 @@ module femto_ram #(parameter RAM_BITS=10) (
                     end else begin
                         state <= STATE_IDLE;
                     end
-                end else if (wstrb) begin
+                end else if (wstrb || wstrb_next) begin
                     if (is_cache_addr) begin
                         cache_valid <= 1'b0;
                     end
@@ -264,7 +256,7 @@ module femto_ram #(parameter RAM_BITS=10) (
                     end else begin
                         state <= STATE_IDLE;
                     end
-                end else if (rstrb) begin
+                end else if (rstrb || rstrb_next) begin
                     if (rinstr) begin
                         cache_addr <= next_cache_addr;
                         cache_valid <= 1'b0;
