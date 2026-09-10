@@ -1,17 +1,19 @@
 /* Copyright 2023-2026 (c) Michael Bell
    SPDX-License-Identifier: BSD-3-Clause
    
-   A Femto-BIO CPU instance, with APB interface.
+   A Femto-BIO CPU instance.
    A 16-bit wide RAM internal to this instance is used for instruction/stack memory. */
 
 `default_nettype none
 
-module femto_bio #(parameter RAM_BITS=10) (
+module femto_bio_core #(parameter RAM_BITS=10) (
     input clk,
     input rst_n,
 
-    output reg [31:0] gpio_out,
-    output reg [31:0] gpio_oe,
+    output reg [31:0] gpio_data_out,
+    output reg [31:0] gpio_mask_out,
+    output reg        gpio_set_out,
+    output reg        gpio_set_oe,
     input  [31:0] gpio_in
 
 );
@@ -107,26 +109,10 @@ module femto_bio #(parameter RAM_BITS=10) (
 
     always @(posedge clk) begin
         if (!rst_n) begin
-            gpio_out <= 32'b0;
-            gpio_oe  <= 32'b0;
             gpio_action_mask <= 32'b0;
         end
         else if (femto_rd_write) begin
             case (femto_rd_id)
-            // x21 write: (x26 & x21) -> gpio pins
-            5'd21: gpio_out <= masked_gpio_set | (gpio_out & ~gpio_action_mask);
-
-            // x22 write: (x26 & x22) -> a `1` in x22 will set corresponding pin on gpio
-            5'd22: gpio_out <= masked_gpio_set | (gpio_out & ~masked_gpio_set);
-
-            // x23 write: (x26 & ~x23) -> a `0` in x23 will clear corresponding pin on gpio
-            5'd23: gpio_out <= gpio_out & ~masked_gpio_clear;
-
-            // x24 write: (x26 & x24) -> a `1` in x24 will make corresponding gpio pin an output
-            5'd24: gpio_oe <= masked_gpio_set | (gpio_oe & ~masked_gpio_set);
-
-            // x25 write: (x26 & x25) -> a `1` in x25 will make corresponding gpio pin an input
-            5'd25: gpio_oe <= gpio_oe & ~masked_gpio_set;
 
             // x26 write: update the gpio action mask
             5'd26: gpio_action_mask <= femto_rd_wdata;
@@ -134,6 +120,54 @@ module femto_bio #(parameter RAM_BITS=10) (
             default: ;
             endcase
         end
+    end
+
+    always @(*) begin
+        gpio_set_out = 1'b0;
+        gpio_set_oe = 1'b0;
+
+        case (femto_rd_id)
+            // x21 write: (x26 & x21) -> gpio pins
+            5'd21: begin
+                gpio_data_out = femto_rd_wdata;
+                gpio_mask_out = gpio_action_mask;
+                gpio_set_out = 1'b1;
+            end
+
+            // x22 write: (x26 & x22) -> a `1` in x22 will set corresponding pin on gpio
+            5'd22: begin
+                gpio_data_out = 32'hffffffff;
+                gpio_mask_out = masked_gpio_set;
+                gpio_set_out = 1'b1;
+            end
+
+            // TODO: Maybe change this to a regular set pattern - I'm not convinced this oddity in the BIO design is useful.
+            // x23 write: (x26 & ~x23) -> a `0` in x23 will clear corresponding pin on gpio
+            5'd23: begin
+                gpio_data_out = 32'b0;
+                gpio_mask_out = masked_gpio_clear;
+                gpio_set_out = 1'b1;
+            end
+
+            // x24 write: (x26 & x24) -> a `1` in x24 will make corresponding gpio pin an output
+            5'd24: begin
+                gpio_data_out = 32'hffffffff;
+                gpio_mask_out = masked_gpio_set;
+                gpio_set_oe = 1'b1;
+            end
+
+            // x25 write: (x26 & x25) -> a `1` in x25 will make corresponding gpio pin an input
+            5'd25: begin
+                gpio_data_out = 32'b0;
+                gpio_mask_out = masked_gpio_set;
+                gpio_set_oe = 1'b1;
+            end
+
+            default: begin
+                gpio_data_out = 32'b0;
+                gpio_mask_out = 32'b0;
+            end
+        endcase
     end
 
 endmodule
