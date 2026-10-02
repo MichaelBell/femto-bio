@@ -137,12 +137,12 @@ module FemtoRV32 #(parameter ADDR_WIDTH=10) (
                         isALUreg | isBranch ? rs2 : Iimm;
 
    // The adder is used for both ALU and address generation.
-   wire aluSubtract = (isALUreg & instr[30]) |         // Subtract
-                      (isALU & instr[13]) | isBranch;  // Uses LT/LTU/EQ
+   wire aluSubtract = (isALUreg & instr[30]) |         // Subtract/ANDN/ORN/XORN
+                      (isALU & ~instr[14] & instr[13]) | isBranch;  // Uses LT/LTU/EQ
 
    wire [32:0] aluExtIn2 = {1'b0, aluIn2};
-   wire [32:0] aluPlusIn2 = aluSubtract ? (~aluExtIn2 + 1) : aluExtIn2;
-   wire [32:0] aluResult = {1'b0, aluIn1} + aluPlusIn2;
+   wire [32:0] aluInvIn2 = aluSubtract ? ~aluExtIn2 : aluExtIn2;
+   wire [32:0] aluResult = {1'b0, aluIn1} + aluInvIn2 + {32'd0, aluSubtract};
    wire [31:0] aluPlus = aluResult[31:0];
 
    // Use a single 33 bits subtract to do subtraction and all comparisons
@@ -156,18 +156,19 @@ module FemtoRV32 #(parameter ADDR_WIDTH=10) (
 
    // Use the same shifter both for left and right shifts by
    // applying bit reversal
-
-   wire [31:0] shifter_in = funct3Is[1] ?
+   wire [31:0] bit_rev = 
      {aluIn1[ 0], aluIn1[ 1], aluIn1[ 2], aluIn1[ 3], aluIn1[ 4], aluIn1[ 5],
       aluIn1[ 6], aluIn1[ 7], aluIn1[ 8], aluIn1[ 9], aluIn1[10], aluIn1[11],
       aluIn1[12], aluIn1[13], aluIn1[14], aluIn1[15], aluIn1[16], aluIn1[17],
       aluIn1[18], aluIn1[19], aluIn1[20], aluIn1[21], aluIn1[22], aluIn1[23],
       aluIn1[24], aluIn1[25], aluIn1[26], aluIn1[27], aluIn1[28], aluIn1[29],
-      aluIn1[30], aluIn1[31]} : aluIn1;
+      aluIn1[30], aluIn1[31]};
+
+   wire [31:0] shifter_in = funct3Is[1] ? bit_rev : aluIn1;
 
    // Rotate support
-   wire [31:0] shifter_in_hi = instr[29] ? shifter_in :
-                               {32{instr[30] & aluIn1[31]}};
+   wire [30:0] shifter_in_hi = instr[29] ? shifter_in[30:0] :
+                               {31{instr[30] & aluIn1[31]}};
 
    /* verilator lint_off WIDTH */
    wire [31:0] shifter = {shifter_in_hi, shifter_in} >> aluIn2[4:0];
@@ -181,6 +182,26 @@ module FemtoRV32 #(parameter ADDR_WIDTH=10) (
      shifter[20], shifter[21], shifter[22], shifter[23], shifter[24],
      shifter[25], shifter[26], shifter[27], shifter[28], shifter[29],
      shifter[30], shifter[31]};
+
+   wire [31:0] byte_rev = 
+     {aluIn1[ 7], aluIn1[ 6], aluIn1[ 5], aluIn1[ 4], aluIn1[ 3], aluIn1[ 2],
+      aluIn1[ 1], aluIn1[ 0], aluIn1[15], aluIn1[14], aluIn1[13], aluIn1[12],
+      aluIn1[11], aluIn1[10], aluIn1[ 9], aluIn1[ 8], aluIn1[23], aluIn1[22],
+      aluIn1[21], aluIn1[20], aluIn1[19], aluIn1[18], aluIn1[17], aluIn1[16],
+      aluIn1[31], aluIn1[30], aluIn1[29], aluIn1[28], aluIn1[27], aluIn1[26],
+      aluIn1[25], aluIn1[24]};
+
+   wire [31:0] bit_rev_in_bytes =
+     {aluIn1[24], aluIn1[25], aluIn1[26], aluIn1[27], aluIn1[28], aluIn1[29],
+      aluIn1[30], aluIn1[31], aluIn1[16], aluIn1[17], aluIn1[18], aluIn1[19],
+      aluIn1[20], aluIn1[21], aluIn1[22], aluIn1[23], aluIn1[ 8], aluIn1[ 9],
+      aluIn1[10], aluIn1[11], aluIn1[12], aluIn1[13], aluIn1[14], aluIn1[15],
+      aluIn1[ 0], aluIn1[ 1], aluIn1[ 2], aluIn1[ 3], aluIn1[ 4], aluIn1[ 5],
+      aluIn1[ 6], aluIn1[ 7]};
+
+   wire [31:0] rev = (instr[23] & instr[20]) ? bit_rev :
+                     instr[20] ? bit_rev_in_bytes : byte_rev;
+   wire use_rev = isALUimm & instr[27];
 
    /***************************************************************************/
 
@@ -198,10 +219,10 @@ module FemtoRV32 #(parameter ADDR_WIDTH=10) (
       funct3Is[1]: aluOut = leftshift;
       funct3Is[2]: aluOut = {31'b0, LT};
       funct3Is[3]: aluOut = {31'b0, LTU};
-      funct3Is[4]: aluOut = aluIn1 ^ aluIn2;
-      funct3Is[5]: aluOut = shifter;
-      funct3Is[6]: aluOut = aluIn1 | aluIn2;
-      funct3Is[7]: aluOut = aluIn1 & aluIn2;
+      funct3Is[4]: aluOut = aluIn1 ^ aluInvIn2[31:0];
+      funct3Is[5]: aluOut = use_rev ? rev : shifter;
+      funct3Is[6]: aluOut = aluIn1 | aluInvIn2[31:0];
+      funct3Is[7]: aluOut = aluIn1 & aluInvIn2[31:0];
       endcase
    end
 

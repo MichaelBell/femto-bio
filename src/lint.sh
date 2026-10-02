@@ -1,0 +1,1 @@
+verilator --lint-only *.v
