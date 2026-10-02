@@ -6,3 +6,5 @@ test/results.xml
 *.asc
 *.bit
 *.log
+*_out.config
+*.svf
