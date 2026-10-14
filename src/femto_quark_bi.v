@@ -35,7 +35,7 @@
 `define NRV_ABI      "ilp32"
 `define NRV_OPTIMIZE "-Os"
 
-module FemtoRV32 #(parameter ADDR_WIDTH=10) (
+module FemtoRV32 #(parameter PC_WIDTH=10) (
    input         clk,
    input         resetn,     // set to 0 to reset the processor
 
@@ -66,7 +66,7 @@ module FemtoRV32 #(parameter ADDR_WIDTH=10) (
 );
 
    parameter RESET_ADDR       = 0;
-   parameter PC_WIDTH         = ADDR_WIDTH;
+   parameter ADDR_WIDTH       = 32;
 
    /***************************************************************************/
    // Instruction decoding.
@@ -115,13 +115,21 @@ module FemtoRV32 #(parameter ADDR_WIDTH=10) (
 
    reg [31:0] rs1;
    reg [31:0] rs2;
-   reg [31:0] registerFile [15:0];
 
-   always @(posedge clk) begin
-     if (writeBack & ~rd_id[4])
-       if (rd_id != 0)
-         registerFile[rd_id[3:0]] <= rd_wdata;
-   end
+   wire [31:0] rs1_reg_data;
+   wire [31:0] rs2_reg_data;
+   
+   femto_reg_file i_reg_file (
+       .clk(clk),
+       .rst_n(resetn),
+       .rs1_id(rs1_id[3:0]),
+       .rs2_id(rs2_id[3:0]),
+       .rd_id(rd_id[3:0]),
+       .rd_wdata(rd_wdata),
+       .we(writeBack & ~rd_id[4]),
+       .rs1(rs1_reg_data),
+       .rs2(rs2_reg_data)
+   );
 
    /***************************************************************************/
    // The ALU. Does operations and tests combinatorially, except shifts.
@@ -223,6 +231,7 @@ module FemtoRV32 #(parameter ADDR_WIDTH=10) (
       funct3Is[5]: aluOut = use_rev ? rev : shifter;
       funct3Is[6]: aluOut = aluIn1 | aluInvIn2[31:0];
       funct3Is[7]: aluOut = aluIn1 & aluInvIn2[31:0];
+      default: aluOut = aluResult[31:0];
       endcase
    end
 
@@ -421,8 +430,8 @@ module FemtoRV32 #(parameter ADDR_WIDTH=10) (
 
          state[WAIT_INSTR_bit]: begin
             if (!mem_rbusy && !reg_rbusy) begin // may be high when executing from SPI flash
-               rs1 <= rs1_id[4] ? rs1_rdata : registerFile[rs1_id[3:0]];
-               rs2 <= rs2_id[4] ? rs2_rdata : registerFile[rs2_id[3:0]];
+               rs1 <= rs1_id[4] ? rs1_rdata : rs1_reg_data;
+               rs2 <= rs2_id[4] ? rs2_rdata : rs2_reg_data;
                instr <= mem_rdata[31:2]; // Bits 0 and 1 are ignored (see
                state <= EXECUTE;         // also the declaration of instr).
             end
@@ -444,12 +453,6 @@ module FemtoRV32 #(parameter ADDR_WIDTH=10) (
       endcase
       end
    end
-
-    integer i;
-    initial begin
-        for (i = 0; i < 32; i = i + 1)
-            registerFile[i] = 0;
-    end
 
 endmodule
 

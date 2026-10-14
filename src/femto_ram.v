@@ -1,4 +1,4 @@
-/* Copyright 2023-2026 (c) Michael Bell
+/* Copyright 2026 (c) Michael Bell
    SPDX-License-Identifier: BSD-3-Clause
    
    RAM module for Femto BIO CPU */
@@ -6,16 +6,22 @@
 `default_nettype none
 
 // 16-bit wide RAM with single read/write port, byte enables on write
-module internal_ram #(parameter RAM_BITS=10) (
+module internal_ram #(parameter RAM_WIDTH=10) (
+    `ifdef USE_POWER_PINS
+    inout  wire VDD,
+    inout  wire VSS,
+    `endif
     input clk,
+    input rst_n,
     input [1:0] wen,
-    input [RAM_BITS-2:0] addr,
+    input [RAM_WIDTH-2:0] addr,
     input [15:0] data_in,
 
-    output reg [15:0] data_out
+    output [15:0] data_out
 );
 
-    reg [15:0] ram [0:(1<<(RAM_BITS-1))-1];
+`ifdef SYNTH_FPGA
+    reg [15:0] ram [0:(1<<(RAM_WIDTH-1))-1];
 
 `ifdef INIT_FILENAME
     parameter INIT_FILE = `INIT_FILENAME;
@@ -24,11 +30,57 @@ module internal_ram #(parameter RAM_BITS=10) (
     end
 `endif
 
+    reg [15:0] data_out_r;
     always @(posedge clk) begin
         if (wen[0]) ram[addr][7:0] <= data_in[7:0];
         if (wen[1]) ram[addr][15:8] <= data_in[15:8];
-        data_out <= ram[addr];
+        data_out_r <= ram[addr];
     end
+
+    assign data_out = data_out_r;
+
+`else
+
+    wire cen;
+    gf180mcu_as_sc_mcu7t3v3__dlybuff_2 i_cen_delay (
+        `ifdef USE_POWER_PINS
+        .VDD  (VDD),
+        .VSS  (VSS),
+        `endif
+        
+        .A(!rst_n), .Y(cen));
+
+    gf180mcu_ocd_ip_sram__sram512x8m8wm1 sram_0 (
+        `ifdef USE_POWER_PINS
+        .VDD  (VDD),
+        .VSS  (VSS),
+        `endif
+
+        .CLK  (clk),
+        .CEN  (cen),
+        .GWEN (~wen[0]),
+        .WEN  (8'b0),
+        .A    (addr),
+        .D    (data_in[7:0]),
+        .Q    (data_out[7:0])
+    );
+
+    gf180mcu_ocd_ip_sram__sram512x8m8wm1 sram_1 (
+        `ifdef USE_POWER_PINS
+        .VDD  (VDD),
+        .VSS  (VSS),
+        `endif
+
+        .CLK  (clk),
+        .CEN  (cen),
+        .GWEN (~wen[1]),
+        .WEN  (8'b0),
+        .A    (addr),
+        .D    (data_in[15:8]),
+        .Q    (data_out[15:8])
+    );
+
+`endif
 
 endmodule
 
@@ -36,7 +88,12 @@ endmodule
 // Normally reads and writes take 2 cycles, but if idle cycles follows an instruction read the next instruction 
 // is cached so it can be fetched without additional wait.
 // Inputs must remain constant while a transaction is in progress
-module femto_ram #(parameter RAM_BITS=10) (
+module femto_ram #(parameter RAM_WIDTH=10) (
+    `ifdef USE_POWER_PINS
+    inout  wire VDD,
+    inout  wire VSS,
+    `endif
+
     input clk,
     input rst_n,
 
@@ -49,7 +106,7 @@ module femto_ram #(parameter RAM_BITS=10) (
     input wstrb,    // High to request a write
     input [3:0] mask,  // Byte-enable mask for writes
 
-    input [RAM_BITS-1:0] addr,  // Address, low 2 bits should be 0 for word (32-bit) accesses.
+    input [RAM_WIDTH-1:0] addr,  // Address, low 2 bits should be 0 for word (32-bit) accesses.
     input half,                 // High if accessing a half-word (16 bits), 
                                 // in this case data_out has high and low halfs equal
                                 // and address bit 1 controls which half word is read.
@@ -72,21 +129,21 @@ module femto_ram #(parameter RAM_BITS=10) (
     reg [15:0] read_low_data;
 
     reg cache_valid;
-    reg [RAM_BITS-1:2] cache_addr;
+    reg [RAM_WIDTH-1:2] cache_addr;
     reg [31:0] cache_data;
 
     // TODO: Replace with latch
     reg [31:0] held_data_out;
 
     reg [1:0] ram_wen;
-    reg [RAM_BITS-2:0] ram_addr;
+    reg [RAM_WIDTH-2:0] ram_addr;
     reg [15:0] ram_data_in;
     wire [15:0] ram_data_out;
 
     reg rstrb_next;
     reg wstrb_next;
 
-    wire is_cache_addr = (addr[RAM_BITS-1:2] == cache_addr);
+    wire is_cache_addr = (addr[RAM_WIDTH-1:2] == cache_addr);
     wire cache_hit = rstrb && rinstr && !half && cache_valid && is_cache_addr;
     wire prefetch_hit = (rstrb || rstrb_next) && rinstr && !half && (state == STATE_PREFETCH_HIGH) && is_cache_addr;
     wire read_complete = (state == STATE_READ_HIGH) || (state == STATE_READ_LOW && half) ||
@@ -96,14 +153,14 @@ module femto_ram #(parameter RAM_BITS=10) (
     assign rbusy = ((rstrb || rstrb_next) && !read_complete) || (state == STATE_READ_LOW && !half);
     assign wbusy = (wstrb || wstrb_next) || write_active;
 
-    wire [RAM_BITS-2:0] low_ram_addr = {addr[RAM_BITS-1:2], 1'b0};
-    wire [RAM_BITS-2:0] high_ram_addr = {addr[RAM_BITS-1:2], 1'b1};
-    wire [RAM_BITS-2:0] half_ram_addr = addr[1] ? high_ram_addr : low_ram_addr;
-    wire [RAM_BITS-1:2] next_cache_addr = addr[RAM_BITS-1:2] + 1;
+    wire [RAM_WIDTH-2:0] low_ram_addr = {addr[RAM_WIDTH-1:2], 1'b0};
+    wire [RAM_WIDTH-2:0] high_ram_addr = {addr[RAM_WIDTH-1:2], 1'b1};
+    wire [RAM_WIDTH-2:0] half_ram_addr = addr[1] ? high_ram_addr : low_ram_addr;
+    wire [RAM_WIDTH-1:2] next_cache_addr = addr[RAM_WIDTH-1:2] + 1;
 
     always @(*) begin
         ram_wen = 2'b00;
-        ram_addr = addr[RAM_BITS-1:1];
+        ram_addr = addr[RAM_WIDTH-1:1];
         ram_data_in = data_in[15:0];
         data_out = held_data_out;
 
@@ -276,8 +333,14 @@ module femto_ram #(parameter RAM_BITS=10) (
         end
     end
 
-    internal_ram #(.RAM_BITS(RAM_BITS)) i_ram(
+    internal_ram #(.RAM_WIDTH(RAM_WIDTH)) i_ram(
+        `ifdef USE_POWER_PINS
+        .VDD  (VDD),
+        .VSS  (VSS),
+        `endif
+
         .clk(clk),
+        .rst_n(rst_n),
         .wen(ram_wen),
         .addr(ram_addr),
         .data_in(ram_data_in),

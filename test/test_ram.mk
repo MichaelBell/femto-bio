@@ -11,7 +11,7 @@ PROJECT_SOURCES = femto_ram.v
 # RTL simulation:
 SIM_BUILD				= sim_build/rtl
 VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
-COMPILE_ARGS 		+= -DSIM
+COMPILE_ARGS 		+= -DSIM -DSYNTH_FPGA
 
 # Allow sharing configuration between design and testbench via `include`:
 COMPILE_ARGS 		+= -I$(SRC_DIR)

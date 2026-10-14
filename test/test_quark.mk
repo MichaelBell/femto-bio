@@ -6,14 +6,14 @@ SIM ?= icarus
 WAVES ?= 1
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = femto_quark_bi.v
+PROJECT_SOURCES = femto_quark_bi.v femto_reg_file.v
 
 PROG ?= $(PWD)/../bioasm/blink.hex
 
 # RTL simulation:
 SIM_BUILD				= sim_build/rtl
 VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
-COMPILE_ARGS 		+= -DSIM
+COMPILE_ARGS 		+= -DSIM -DSYNTH_FPGA
 COMPILE_ARGS 		+= -DINIT_FILENAME=\"$(PROG)\"
 
 # Allow sharing configuration between design and testbench via `include`:

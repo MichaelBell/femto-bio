@@ -1,1 +1,1 @@
-verilator --lint-only *.v
+verilator --lint-only -DSYNTH_FPGA *.v

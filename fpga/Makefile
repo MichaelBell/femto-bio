@@ -6,7 +6,7 @@ OBJS += tt_wrapper.v ../src/*.v
 all: ${TARGET}.bit
 
 $(TARGET).ys: $(OBJS)
-	yosys -p "synth_ecp5 -top ${TOP} -json $@" $(OBJS) > yosys.log
+	yosys -p "synth_ecp5 -top ${TOP} -json $@" -DSYNTH_FPGA $(OBJS) > yosys.log
 	@grep Warn yosys.log || true
 	@grep Error yosys.log || true
 	@egrep "[0-9]+ submodules" yosys.log | head -1

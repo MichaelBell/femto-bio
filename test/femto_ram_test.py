@@ -51,7 +51,7 @@ async def test_linear(dut):
         assert dut.rbusy.value == 0
         assert dut.data_out.value == addr
 
-async def write_random_word(dut, ram_data):
+async def write_random_word(dut, ram_data, allow_delay=False):
     addr = random.randint(0, len(ram_data)-4) & ~3
     dut.addr.value = addr
     dut.wstrb.value = 1
@@ -67,8 +67,13 @@ async def write_random_word(dut, ram_data):
     dut.wstrb.value = 0
     await ClockCycles(dut.clk, 1)
     assert dut.wbusy.value == 1
+    await ClockCycles(dut.clk, 1)
+    if allow_delay:
+        if dut.wbusy.value == 1: await ClockCycles(dut.clk, 1)
+        if dut.wbusy.value == 1: await ClockCycles(dut.clk, 1)
+    assert dut.wbusy.value == 0
 
-async def read_random_word(dut, ram_data):
+async def read_random_word(dut, ram_data, allow_delay=False):
     addr = random.randint(0, len(ram_data)-4) & ~3
     dut.addr.value = addr
     dut.rstrb.value = 1
@@ -78,11 +83,14 @@ async def read_random_word(dut, ram_data):
     await ClockCycles(dut.clk, 1)
     assert dut.rbusy.value == 1
     await ClockCycles(dut.clk, 1)
+    if allow_delay:
+        if dut.rbusy.value == 1: await ClockCycles(dut.clk, 1)
+        if dut.rbusy.value == 1: await ClockCycles(dut.clk, 1)
     assert dut.rbusy.value == 0
     expected_data = (ram_data[addr+3] << 24) | (ram_data[addr+2] << 16) | (ram_data[addr+1] << 8) | ram_data[addr]
     assert dut.data_out.value == expected_data
 
-async def write_random_hword(dut, ram_data):
+async def write_random_hword(dut, ram_data, allow_delay=False):
     addr = random.randint(0, len(ram_data)-2) & ~1
     dut.addr.value = addr
     dut.wstrb.value = 1
@@ -99,9 +107,12 @@ async def write_random_hword(dut, ram_data):
     dut.wstrb.value = 0
     dut.half.value = 0
     await ClockCycles(dut.clk, 1)
+    if allow_delay:
+        if dut.wbusy.value == 1: await ClockCycles(dut.clk, 1)
+        if dut.wbusy.value == 1: await ClockCycles(dut.clk, 1)
     assert dut.wbusy.value == 0
 
-async def write_random_byte(dut, ram_data):
+async def write_random_byte(dut, ram_data, allow_delay=False):
     addr = random.randint(0, len(ram_data)-1)
     dut.addr.value = addr
     dut.wstrb.value = 1
@@ -115,9 +126,12 @@ async def write_random_byte(dut, ram_data):
     dut.wstrb.value = 0
     dut.half.value = 0
     await ClockCycles(dut.clk, 1)
+    if allow_delay:
+        if dut.wbusy.value == 1: await ClockCycles(dut.clk, 1)
+        if dut.wbusy.value == 1: await ClockCycles(dut.clk, 1)
     assert dut.wbusy.value == 0
 
-async def read_random_hword(dut, ram_data):
+async def read_random_hword(dut, ram_data, allow_delay=False):
     addr = random.randint(0, len(ram_data)-2) & ~1
     dut.addr.value = addr
     dut.rstrb.value = 1
@@ -127,6 +141,9 @@ async def read_random_hword(dut, ram_data):
     dut.rstrb.value = 0
     await ClockCycles(dut.clk, 1)
     dut.half.value = 0
+    if allow_delay:
+        if dut.rbusy.value == 1: await ClockCycles(dut.clk, 1)
+        if dut.rbusy.value == 1: await ClockCycles(dut.clk, 1)
     assert dut.rbusy.value == 0
     expected_data = (ram_data[addr+1] << 8) | ram_data[addr]
     recv_data = dut.data_out.value.to_unsigned()
@@ -134,7 +151,7 @@ async def read_random_hword(dut, ram_data):
     else: recv_data &= 0xffff
     assert recv_data == expected_data
 
-async def read_random_byte(dut, ram_data):
+async def read_random_byte(dut, ram_data, allow_delay=False):
     addr = random.randint(0, len(ram_data)-1)
     dut.addr.value = addr
     dut.rstrb.value = 1
@@ -144,6 +161,9 @@ async def read_random_byte(dut, ram_data):
     dut.rstrb.value = 0
     await ClockCycles(dut.clk, 1)
     dut.half.value = 0
+    if allow_delay:
+        if dut.rbusy.value == 1: await ClockCycles(dut.clk, 1)
+        if dut.rbusy.value == 1: await ClockCycles(dut.clk, 1)
     assert dut.rbusy.value == 0
     expected_data = ram_data[addr]
     recv_data = dut.data_out.value.to_unsigned()
@@ -360,7 +380,7 @@ async def test_mix(dut):
 
         if random.randint(0, 5) == 0:
             func = random.choice(access_funcs)
-            await func(dut, ram_data)
+            await func(dut, ram_data, True)
             interrupted = True
         else:
             await ClockCycles(dut.clk, 1)

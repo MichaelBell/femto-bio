@@ -1,4 +1,4 @@
-/* Copyright 2023-2026 (c) Michael Bell
+/* Copyright 2026 (c) Michael Bell
    SPDX-License-Identifier: BSD-3-Clause
    
    A Femto-BIO CPU instance.
@@ -6,7 +6,12 @@
 
 `default_nettype none
 
-module femto_bio_core #(parameter RAM_BITS=10) (
+module femto_bio_core #(parameter RAM_WIDTH=10) (
+    `ifdef USE_POWER_PINS
+    inout  wire VDD,
+    inout  wire VSS,
+    `endif
+
     input clk,
     input rst_n,
 
@@ -43,7 +48,7 @@ module femto_bio_core #(parameter RAM_BITS=10) (
 
     reg [31:0] gpio_action_mask;
 
-    FemtoRV32 i_femtorv(
+    FemtoRV32 #(.PC_WIDTH(RAM_WIDTH)) i_femtorv(
         .clk(clk),
         .resetn(rst_n),
 
@@ -71,14 +76,19 @@ module femto_bio_core #(parameter RAM_BITS=10) (
         .reg_rbusy(femto_reg_rbusy)   // asserted while register read should block
     );
 
-    femto_ram #(.RAM_BITS(RAM_BITS)) i_femtoram (
+    femto_ram #(.RAM_WIDTH(RAM_WIDTH)) i_femtoram (
+        `ifdef USE_POWER_PINS
+        .VDD  (VDD),
+        .VSS  (VSS),
+        `endif
+
         .clk(clk),
         .rst_n(rst_n),
         .rstrb(femto_rstrb),
         .rinstr(femto_rinstr),
         .wstrb(femto_wstrb),
         .mask(femto_mask),
-        .addr(femto_addr[RAM_BITS-1:0]),
+        .addr(femto_addr[RAM_WIDTH-1:0]),
         .half(femto_half),
         .rbusy(femto_rbusy),
         .wbusy(femto_wbusy),

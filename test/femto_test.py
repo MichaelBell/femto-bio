@@ -35,4 +35,4 @@ async def test_start(dut):
                 break
         else:
             assert False, "Timeout waiting for gpio_out to become 0"
-    
+
