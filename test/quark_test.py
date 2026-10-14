@@ -50,12 +50,17 @@ class InstructionREV(InstructionISType):
     def execute(self, model: Model):
         model.state.intreg[self.rd] = model.state.intreg[self.rs1]
 
-async def run_alu_reg_instruction(dut, inst, rs1_val, rs2_val):
+async def run_alu_reg_instruction(dut, inst, rs1_val, rs2_val, delay_cycles=0):
     assert dut.mem_rinstr.value == 1
 
     dut.rs1_rdata.value = rs1_val
     dut.rs2_rdata.value = rs2_val
     dut.mem_rdata.value = inst(x16, x17, x18).encode()
+    if delay_cycles > 0:
+        dut.reg_rbusy.value = 1
+        await ClockCycles(dut.clk, delay_cycles)
+        dut.reg_rbusy.value = 0
+
     await ClockCycles(dut.clk, 2)
 
     assert dut.rd_write.value == 1
@@ -223,3 +228,15 @@ async def test_quantum(dut):
     assert await run_quantum_write(dut, InstructionADD, a, b, 4) == (a + b) & 0xFFFFFFFF
     assert await run_alu_reg_instruction(dut, InstructionADD, a, b) == (a + b) & 0xFFFFFFFF    
     assert await run_quantum_write(dut, InstructionADD, a, b) == (a + b) & 0xFFFFFFFF
+
+@cocotb.test()
+async def test_delayed_read(dut):
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())    
+
+    await reset(dut)
+
+    a = 0x12345678
+    b = 0x9ABCDEF0
+    for i in range(11):
+        assert await run_alu_reg_instruction(dut, InstructionADD, a + i, b, 0 if (i & 1) != 0 else i+1) == (a + i + b) & 0xFFFFFFFF    
+
