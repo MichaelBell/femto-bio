@@ -7,7 +7,7 @@ from cocotb.utils import get_sim_time
 from cocotb.types import LogicArray
 
 from riscvmodel.insn import *
-from riscvmodel.regnames import x0, x1, x16, x17, x18
+from riscvmodel.regnames import x0, x1, x16, x17, x18, x19, x20
 
 from riscvmodel.isa import *
 from riscvmodel.variant import *
@@ -51,7 +51,6 @@ class InstructionREV(InstructionISType):
         model.state.intreg[self.rd] = model.state.intreg[self.rs1]
 
 async def run_alu_reg_instruction(dut, inst, rs1_val, rs2_val):
-    assert dut.mem_rstrb.value == 1
     assert dut.mem_rinstr.value == 1
 
     dut.rs1_rdata.value = rs1_val
@@ -60,10 +59,11 @@ async def run_alu_reg_instruction(dut, inst, rs1_val, rs2_val):
     await ClockCycles(dut.clk, 2)
 
     assert dut.rd_write.value == 1
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
     return dut.rd_wdata.value
 
 async def run_rev_instruction(dut, rs1_val, mode):
-    assert dut.mem_rstrb.value == 1
     assert dut.mem_rinstr.value == 1
 
     dut.rs1_rdata.value = rs1_val
@@ -71,13 +71,33 @@ async def run_rev_instruction(dut, rs1_val, mode):
     await ClockCycles(dut.clk, 2)
 
     assert dut.rd_write.value == 1
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
     return dut.rd_wdata.value
 
+async def run_quantum_write(dut, inst, rs1_val, rs2_val, delay_cycles=2):
+    assert dut.mem_rinstr.value == 1
 
-@cocotb.test()
-async def test_start(dut):
-    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    dut.rs1_rdata.value = rs1_val
+    dut.rs2_rdata.value = rs2_val
+    dut.mem_rdata.value = inst(x20, x17, x18).encode()
+    await ClockCycles(dut.clk, 1)
+    assert dut.rd_write.value == 0
+    await Timer(1, units="ns")
+    assert dut.rd_write.value == 1
+    dut.reg_wbusy.value = 1
+    await ClockCycles(dut.clk, 1)
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
 
+    await ClockCycles(dut.clk, delay_cycles)
+    assert dut.mem_rstrb.value == 0
+    dut.reg_wbusy.value = 0
+    await ClockCycles(dut.clk, 1)
+
+    return dut.rd_wdata.value
+
+async def reset(dut):
     dut.mem_rdata.value = InstructionNOP().encode()
     dut.mem_rbusy.value = 0
     dut.mem_wbusy.value = 0
@@ -90,6 +110,13 @@ async def test_start(dut):
     await ClockCycles(dut.clk, 5)
     dut.rst_n.value = 1
     await ClockCycles(dut.clk, 2)
+
+
+@cocotb.test()
+async def test_start(dut):
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+
+    await reset(dut)
 
     for _ in range(10):
         a = random.randint(0, 0xFFFFFFFF)
@@ -183,3 +210,16 @@ async def test_start(dut):
         for i in range(32):
             res |= ((a >> (31 - i)) & 1) << i
         assert await run_rev_instruction(dut, a, 0b11111) == res
+
+@cocotb.test()
+async def test_quantum(dut):
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())    
+
+    await reset(dut)
+
+    a = 0x12345678
+    b = 0x9ABCDEF0
+    assert await run_quantum_write(dut, InstructionADD, a, b) == (a + b) & 0xFFFFFFFF
+    assert await run_quantum_write(dut, InstructionADD, a, b, 4) == (a + b) & 0xFFFFFFFF
+    assert await run_alu_reg_instruction(dut, InstructionADD, a, b) == (a + b) & 0xFFFFFFFF    
+    assert await run_quantum_write(dut, InstructionADD, a, b) == (a + b) & 0xFFFFFFFF

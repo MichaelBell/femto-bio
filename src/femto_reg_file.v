@@ -55,18 +55,21 @@ module femto_reg_file (
 
 `ifdef SYNTH_FPGA
 
-   reg [31:0] registerFile [15:0];
+    reg [31:0] registerFile [15:0];
 
-   always @(posedge clk) begin
-     if (~rst_n) begin
-         for (integer i = 0; i < 16; i = i + 1)
-             registerFile[i] <= 32'b0;
-     end else if (we && rd_id != 0)
-         registerFile[rd_id] <= rd_wdata;
-   end
+    always @(posedge clk) begin
+        if (we && rd_id != 0)
+            registerFile[rd_id] <= rd_wdata;
+    end
 
-   assign rs1 = registerFile[rs1_id];
-   assign rs2 = registerFile[rs2_id];
+    integer i;
+    initial begin
+        for (i = 0; i < 16; i = i + 1)
+            registerFile[i] = 0;
+    end    
+
+    assign rs1 = registerFile[rs1_id];
+    assign rs2 = registerFile[rs2_id];
 
 `else
 

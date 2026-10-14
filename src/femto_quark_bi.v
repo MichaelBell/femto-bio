@@ -378,7 +378,7 @@ module FemtoRV32 #(parameter PC_WIDTH=10) (
 
    // The memory transaction activate signals.
    assign mem_rstrb = (state[EXECUTE_bit] & ~isStore) | state[FETCH_INSTR_bit];
-   assign mem_rinstr = (state[EXECUTE_bit] & ~isStore & ~isLoad) | state[FETCH_INSTR_bit] | state[WAIT_INSTR_bit];
+   assign mem_rinstr = ((state[EXECUTE_bit] | state[WAIT_ALU_OR_MEM_bit]) & ~isStore & ~isLoad) | state[FETCH_INSTR_bit] | state[WAIT_INSTR_bit];
    assign mem_wstrb = state[EXECUTE_bit] & isStore;
 
    // The mask for memory.
@@ -421,7 +421,7 @@ module FemtoRV32 #(parameter PC_WIDTH=10) (
       if(!resetn) begin
          state      <= WAIT_ALU_OR_MEM; // Just waiting for !mem_wbusy
          PC         <= RESET_ADDR[PC_WIDTH-1:0];
-         instr      <= 30'd1;  // Invalid op with rd=0, which will set rd to 0.
+         instr      <= 30'b01000;  // Dummy store to force transition through FETCH_INSTR
       end else begin
 
       // See note [1] at the end of this file.
@@ -443,7 +443,10 @@ module FemtoRV32 #(parameter PC_WIDTH=10) (
          end
 
          state[WAIT_ALU_OR_MEM_bit]: begin
-            if(!mem_rbusy & !mem_wbusy) state <= FETCH_INSTR;
+            if(!mem_rbusy & !mem_wbusy & !reg_wbusy) begin
+               if (isLoad | isStore) state <= FETCH_INSTR;
+               else state <= WAIT_INSTR;
+            end
          end
 
          default: begin // FETCH_INSTR
