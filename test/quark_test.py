@@ -11,6 +11,41 @@ from riscvmodel.regnames import x0, x1, x16, x17, x18, x19, x20
 
 from riscvmodel.isa import *
 from riscvmodel.variant import *
+from riscvmodel.model import Model
+
+# Some riscvmodel fixes
+del InstructionSLTIU, InstructionSRAI, InstructionSLTU, InstructionSRL
+@isa("sltiu", RV32I, opcode=0b0010011, funct3=0b011)
+class InstructionSLTIU(InstructionIType):
+    def execute(self, model: Model):
+        if model.state.intreg[self.rs1].unsigned() < int(self.imm) & 0xFFFFFFFF:
+            model.state.intreg[self.rd] = 1
+        else:
+            model.state.intreg[self.rd] = 0
+
+@isa("srai", RV32I, opcode=0b0010011, funct3=0b101, funct7=0b0100000)
+class InstructionSRAI(InstructionISType):
+    def execute(self, model: Model):
+        src = model.state.intreg[self.rs1].unsigned()
+        if src & 0x80000000:
+            src |= 0xFFFFFFFF00000000
+        model.state.intreg[self.rd] = (src >> self.shamt.unsigned()) & 0xFFFFFFFF
+
+@isa("sltu", RV32I, opcode=0b0110011, funct3=0b011, funct7=0b0000000)
+class InstructionSLTU(InstructionRType):
+    def execute(self, model: Model):
+        if model.state.intreg[self.rs1].unsigned() < model.state.intreg[
+                self.rs2].unsigned():
+            model.state.intreg[self.rd] = 1
+        else:
+            model.state.intreg[self.rd] = 0
+
+@isa("srl", RV32I, opcode=0b0110011, funct3=0b101, funct7=0b0000000)
+class InstructionSRL(InstructionRType):
+    def execute(self, model: Model):
+        src = model.state.intreg[self.rs1].unsigned()
+        shift = int(model.state.intreg[self.rs2] & 0x1f)
+        model.state.intreg[self.rd] = src >> shift
 
 @isa("rol", RV32I, opcode=0b0110011, funct3=0b001, funct7=0b0110000)
 class InstructionROL(InstructionRType):
@@ -19,7 +54,8 @@ class InstructionROL(InstructionRType):
     specified in the second source register (rs2). The result is stored in the destination register (rd).
     """
     def execute(self, model: Model):
-        model.state.intreg[self.rd] = ((model.state.intreg[self.rs1] << model.state.intreg[self.rs2]) | (model.state.intreg[self.rs1] >> (32 - model.state.intreg[self.rs2]))) & 0xFFFFFFFF
+        shift = int(model.state.intreg[self.rs2] & 0x1f)
+        model.state.intreg[self.rd] = ((model.state.intreg[self.rs1] << shift) | (model.state.intreg[self.rs1] >> (32 - shift))) & 0xFFFFFFFF
 
 @isa("ror", RV32I, opcode=0b0110011, funct3=0b101, funct7=0b0110000)
 class InstructionROR(InstructionRType):
@@ -28,7 +64,17 @@ class InstructionROR(InstructionRType):
     specified in the second source register (rs2). The result is stored in the destination register (rd).
     """
     def execute(self, model: Model):
-        model.state.intreg[self.rd] = ((model.state.intreg[self.rs1] >> model.state.intreg[self.rs2]) | (model.state.intreg[self.rs1] << (32 - model.state.intreg[self.rs2]))) & 0xFFFFFFFF
+        shift = int(model.state.intreg[self.rs2] & 0x1f)
+        model.state.intreg[self.rd] = ((model.state.intreg[self.rs1] >> shift) | (model.state.intreg[self.rs1] << (32 - shift))) & 0xFFFFFFFF
+
+@isa("rori", RV32I, opcode=0b0010011, funct3=0b101, funct7=0b0110000)
+class InstructionRORI(InstructionISType):
+    """
+    The Rotate Right Immediate (RORI) instruction rotates the bits of the first source register (rs1) to the right by the immediate
+    value specified in the instruction. The result is stored in the destination register (rd).
+    """
+    def execute(self, model: Model):
+        model.state.intreg[self.rd] = ((model.state.intreg[self.rs1] >> self.shamt) | (model.state.intreg[self.rs1] << (32 - self.shamt.unsigned()))) & 0xFFFFFFFF
 
 @isa("andn", RV32I, opcode=0b0110011, funct3=0b111, funct7=0b0100000)
 class InstructionANDN(InstructionRType):
@@ -48,7 +94,19 @@ class InstructionXNOR(InstructionRType):
 @isa("rev", RV32I, opcode=0b0010011, funct3=0b101, funct7=0b0110100)
 class InstructionREV(InstructionISType):
     def execute(self, model: Model):
-        model.state.intreg[self.rd] = model.state.intreg[self.rs1]
+        if self.shamt.unsigned() == 0b00111:
+            model.state.intreg[self.rd] = int.from_bytes([int('{:08b}'.format(n)[::-1], 2) for n in model.state.intreg[self.rs1].unsigned().to_bytes(4)])
+        elif self.shamt.unsigned() == 0b11000:
+            model.state.intreg[self.rd] = int.from_bytes(model.state.intreg[self.rs1].unsigned().to_bytes(4, byteorder='big'), byteorder='little')
+        elif self.shamt.unsigned() == 0b11111:
+            model.state.intreg[self.rd] = int('{:032b}'.format(model.state.intreg[self.rs1].unsigned())[::-1], 2)
+        else:
+            model.state.intreg[self.rd] = model.state.intreg[self.rs1]
+
+    def randomize(self, variant: Variant):
+        self.rd = random.randrange(0, variant.xlen)
+        self.rs1 = random.randrange(0, variant.xlen)
+        self.shamt.set(random.choice([0b00111, 0b11000, 0b11111]))
 
 async def run_alu_reg_instruction(dut, inst, rs1_val, rs2_val, delay_cycles=0):
     assert dut.mem_rinstr.value == 1
@@ -56,6 +114,22 @@ async def run_alu_reg_instruction(dut, inst, rs1_val, rs2_val, delay_cycles=0):
     dut.rs1_rdata.value = rs1_val
     dut.rs2_rdata.value = rs2_val
     dut.mem_rdata.value = inst(x16, x17, x18).encode()
+    if delay_cycles > 0:
+        dut.reg_rbusy.value = 1
+        await ClockCycles(dut.clk, delay_cycles)
+        dut.reg_rbusy.value = 0
+
+    await ClockCycles(dut.clk, 2)
+
+    assert dut.rd_write.value == 1
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+    return dut.rd_wdata.value
+
+async def get_reg_value(dut, reg, delay_cycles=0):
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionADD(x16, reg, x0).encode()
     if delay_cycles > 0:
         dut.reg_rbusy.value = 1
         await ClockCycles(dut.clk, delay_cycles)
@@ -88,7 +162,7 @@ async def run_quantum_write(dut, inst, rs1_val, rs2_val, delay_cycles=2):
     dut.mem_rdata.value = inst(x20, x17, x18).encode()
     await ClockCycles(dut.clk, 1)
     assert dut.rd_write.value == 0
-    await Timer(1, units="ns")
+    await Timer(1, unit="ns")
     assert dut.rd_write.value == 1
     dut.reg_wbusy.value = 1
     await ClockCycles(dut.clk, 1)
@@ -240,3 +314,38 @@ async def test_delayed_read(dut):
     for i in range(11):
         assert await run_alu_reg_instruction(dut, InstructionADD, a + i, b, 0 if (i & 1) != 0 else i+1) == (a + i + b) & 0xFFFFFFFF    
 
+@cocotb.test()
+async def test_random_instructions_low_regs(dut):
+    i_insns = [InstructionADDI, InstructionORI, InstructionXORI, InstructionANDI, InstructionSLLI, InstructionSRLI, InstructionSRAI, InstructionSLTI, InstructionSLTIU, InstructionRORI, InstructionREV]
+    r_insns = [InstructionADD, InstructionSUB, InstructionSLL, InstructionSLT, InstructionSLTU, InstructionXOR, InstructionSRL, InstructionSRA, InstructionOR, InstructionAND, InstructionROR, InstructionROL, InstructionANDN, InstructionORN, InstructionXNOR, ]
+
+    # Hack because randomize incorrectly uses xlen as the number of registers
+    RV32E.xlen = 16
+
+    model = Model(RV32E)
+
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())    
+
+    await reset(dut)
+
+    # Clear all regs
+    for reg in range(1, 16):
+        dut.mem_rdata.value = InstructionADD(reg, 0, 0).encode()
+        await ClockCycles(dut.clk, 2)
+
+    for _ in range(500):
+        for _ in range(20):
+            if random.random() < 0.5:
+                insn = random.choice(i_insns)()
+            else:
+                insn = random.choice(r_insns)()
+
+            insn.randomize(RV32E)
+            model.execute(insn)
+            #print(f"{insn} = {model.state.intreg[insn.rd].unsigned() if hasattr(insn, 'rd') else 'N/A'}")
+            dut.mem_rdata.value = insn.encode()
+            await ClockCycles(dut.clk, 2)
+
+        for reg in range(1, 16):
+            #print(f"  x{reg} = {model.state.intreg[reg].unsigned()}")
+            assert await get_reg_value(dut, reg) == model.state.intreg[reg].unsigned()

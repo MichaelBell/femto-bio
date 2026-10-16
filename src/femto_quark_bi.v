@@ -207,9 +207,9 @@ module FemtoRV32 #(parameter PC_WIDTH=10) (
       aluIn1[ 0], aluIn1[ 1], aluIn1[ 2], aluIn1[ 3], aluIn1[ 4], aluIn1[ 5],
       aluIn1[ 6], aluIn1[ 7]};
 
-   wire [31:0] rev = (instr[23] & instr[20]) ? bit_rev :
-                     instr[20] ? bit_rev_in_bytes : byte_rev;
-   wire use_rev = isALUimm & instr[27];
+   wire [31:0] rev = (instr[23] & ~instr[20]) ? byte_rev :
+                     (~instr[23] & instr[20]) ? bit_rev_in_bytes : bit_rev;
+   wire use_rev = (isALUimm & instr[27]) | funct3Is[1];
 
    /***************************************************************************/
 
