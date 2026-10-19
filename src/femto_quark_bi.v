@@ -259,12 +259,12 @@ module FemtoRV32 #(parameter PC_WIDTH=10) (
    wire [31:0] debug_instr = {instr, 2'b11};
 `endif
 
-   wire [PC_WIDTH-1:0] PCplus4 = PC + 4;
+   wire [PC_WIDTH-1:0] PCplus4 = {PC[PC_WIDTH-1:2] + 30'd1, 2'b00};
 
-   // Branch address comes from the adder
-   wire [PC_WIDTH-1:0] PCplusImm = PC + ( instr[3] ? Jimm[PC_WIDTH-1:0] :
-                                          instr[4] ? Uimm[PC_WIDTH-1:0] :
-                                                     Bimm[PC_WIDTH-1:0] );
+   // Branch address comes from the adder, adder must be full width for AUIPC
+   wire [31:0] PCplusImm = PC + ( instr[3] ? Jimm :
+                                  instr[4] ? Uimm :
+                                             Bimm );
 
    // Destination of load/store comes from the adder
    wire [ADDR_WIDTH-1:0] loadstore_addr = aluPlus[ADDR_WIDTH-1:0];
@@ -274,8 +274,8 @@ module FemtoRV32 #(parameter PC_WIDTH=10) (
    // 32 bits, so we deactivate width test for mem_addr and writeBackData
 
    wire [PC_WIDTH-1:0] PC_new =
-      isJALR           ? {aluPlus[PC_WIDTH-1:1],1'b0} :
-      jumpToPCplusImm  ? PCplusImm :
+      isJALR           ? {aluPlus[PC_WIDTH-1:2],2'b00} :  // Force restrict PC to be a multiple of 4
+      jumpToPCplusImm  ? {PCplusImm[PC_WIDTH-1:2],2'b00} :
                          PCplus4;
 
    assign mem_addr = state[WAIT_INSTR_bit] | state[FETCH_INSTR_bit] ? PC     :

@@ -14,7 +14,7 @@ from riscvmodel.variant import *
 from riscvmodel.model import Model
 
 # Some riscvmodel fixes
-del InstructionSLTIU, InstructionSRAI, InstructionSLTU, InstructionSRL
+del InstructionSLTIU, InstructionSRAI, InstructionSLTU, InstructionSRL, InstructionJAL, InstructionJALR
 @isa("sltiu", RV32I, opcode=0b0010011, funct3=0b011)
 class InstructionSLTIU(InstructionIType):
     def execute(self, model: Model):
@@ -108,6 +108,23 @@ class InstructionREV(InstructionISType):
         self.rs1 = random.randrange(0, variant.xlen)
         self.shamt.set(random.choice([0b00111, 0b11000, 0b11111]))
 
+@isa("jal", RV32I, opcode=0b1101111)
+class InstructionJAL(InstructionJType):
+    def execute(self, model: Model):
+        model.state.intreg[self.rd] = (model.state.pc.unsigned() + 4) & 0x3FC
+        model.state.pc = (model.state.pc + self.imm) & 0x3FC
+
+    def randomize(self, variant: Variant):
+        self.rd = randrange(0, variant.xlen)
+        self.imm.randomize()
+        self.imm.set(self.imm.value & ~3)
+
+@isa("jalr", RV32I, opcode=0b1100111, funct3=0b000)
+class InstructionJALR(InstructionIType):
+    def execute(self, model: Model):
+        model.state.intreg[self.rd] = (model.state.pc.unsigned() + 4) & 0x3FC
+        model.state.pc = (model.state.intreg[self.rs1] + self.imm) & 0x3FC
+
 async def run_alu_reg_instruction(dut, inst, rs1_val, rs2_val, delay_cycles=0):
     assert dut.mem_rinstr.value == 1
 
@@ -130,6 +147,22 @@ async def get_reg_value(dut, reg, delay_cycles=0):
     assert dut.mem_rinstr.value == 1
 
     dut.mem_rdata.value = InstructionADD(x16, reg, x0).encode()
+    if delay_cycles > 0:
+        dut.reg_rbusy.value = 1
+        await ClockCycles(dut.clk, delay_cycles)
+        dut.reg_rbusy.value = 0
+
+    await ClockCycles(dut.clk, 2)
+
+    assert dut.rd_write.value == 1
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+    return dut.rd_wdata.value
+
+async def get_pc_value(dut, delay_cycles=0):
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionAUIPC(x16, 0).encode()
     if delay_cycles > 0:
         dut.reg_rbusy.value = 1
         await ClockCycles(dut.clk, delay_cycles)
@@ -316,8 +349,11 @@ async def test_delayed_read(dut):
 
 @cocotb.test()
 async def test_random_instructions_low_regs(dut):
-    i_insns = [InstructionADDI, InstructionORI, InstructionXORI, InstructionANDI, InstructionSLLI, InstructionSRLI, InstructionSRAI, InstructionSLTI, InstructionSLTIU, InstructionRORI, InstructionREV]
-    r_insns = [InstructionADD, InstructionSUB, InstructionSLL, InstructionSLT, InstructionSLTU, InstructionXOR, InstructionSRL, InstructionSRA, InstructionOR, InstructionAND, InstructionROR, InstructionROL, InstructionANDN, InstructionORN, InstructionXNOR, ]
+    insns = [InstructionADDI, InstructionORI, InstructionXORI, InstructionANDI, InstructionSLLI, InstructionSRLI, InstructionSRAI, InstructionSLTI, InstructionSLTIU, InstructionRORI, InstructionREV,  # I type
+             InstructionADD, InstructionSUB, InstructionSLL, InstructionSLT, InstructionSLTU, InstructionXOR, InstructionSRL, InstructionSRA, InstructionOR, InstructionAND, InstructionROR, InstructionROL, InstructionANDN, InstructionORN, InstructionXNOR, # R type
+             InstructionAUIPC, InstructionLUI,  # U type
+             InstructionJAL, InstructionJALR,  # Jumps
+             InstructionBEQ, InstructionBNE, InstructionBLT, InstructionBGE, InstructionBLTU, InstructionBGEU]  # B type
 
     # Hack because randomize incorrectly uses xlen as the number of registers
     RV32E.xlen = 16
@@ -330,22 +366,29 @@ async def test_random_instructions_low_regs(dut):
 
     # Clear all regs
     for reg in range(1, 16):
-        dut.mem_rdata.value = InstructionADD(reg, 0, 0).encode()
+        val = random.randint(-0x800, 0x7FF)
+        model.state.intreg[reg].set(val)
+        dut.mem_rdata.value = InstructionADDI(reg, 0, val).encode()
         await ClockCycles(dut.clk, 2)
+
+    model.state.pc.set(15 * 4)
 
     for _ in range(500):
         for _ in range(20):
-            if random.random() < 0.5:
-                insn = random.choice(i_insns)()
-            else:
-                insn = random.choice(r_insns)()
-
+            insn = random.choice(insns)()
             insn.randomize(RV32E)
-            model.execute(insn)
-            #print(f"{insn} = {model.state.intreg[insn.rd].unsigned() if hasattr(insn, 'rd') else 'N/A'}")
+            model.issue(insn)
+            #print(f"{insn} = {model.state.intreg[insn.rd].unsigned() if hasattr(insn, 'rd') else 'N/A'}, PC {model.state.pc.unsigned()}")
+
             dut.mem_rdata.value = insn.encode()
             await ClockCycles(dut.clk, 2)
+            model.state.pc.set(model.state.pc.unsigned() & 0x3FC)
 
         for reg in range(1, 16):
             #print(f"  x{reg} = {model.state.intreg[reg].unsigned()}")
             assert await get_reg_value(dut, reg) == model.state.intreg[reg].unsigned()
+
+        model.state.pc.set((model.state.pc.unsigned() + (15 * 4)) & 0x3FC)
+    
+        assert await get_pc_value(dut) == model.state.pc.unsigned()
+        model.state.pc.set((model.state.pc.unsigned() + 4) & 0x3FC)
