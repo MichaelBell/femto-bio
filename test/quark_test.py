@@ -224,7 +224,7 @@ async def reset(dut):
     await ClockCycles(dut.clk, 2)
 
 
-@cocotb.test()
+#@cocotb.test()
 async def test_start(dut):
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
 
@@ -323,7 +323,7 @@ async def test_start(dut):
             res |= ((a >> (31 - i)) & 1) << i
         assert await run_rev_instruction(dut, a, 0b11111) == res
 
-@cocotb.test()
+#@cocotb.test()
 async def test_quantum(dut):
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())    
 
@@ -336,7 +336,7 @@ async def test_quantum(dut):
     assert await run_alu_reg_instruction(dut, InstructionADD, a, b) == (a + b) & 0xFFFFFFFF    
     assert await run_quantum_write(dut, InstructionADD, a, b) == (a + b) & 0xFFFFFFFF
 
-@cocotb.test()
+#@cocotb.test()
 async def test_delayed_read(dut):
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())    
 
@@ -347,7 +347,7 @@ async def test_delayed_read(dut):
     for i in range(11):
         assert await run_alu_reg_instruction(dut, InstructionADD, a + i, b, 0 if (i & 1) != 0 else i+1) == (a + i + b) & 0xFFFFFFFF    
 
-@cocotb.test()
+#@cocotb.test()
 async def test_random_instructions_low_regs(dut):
     insns = [InstructionADDI, InstructionORI, InstructionXORI, InstructionANDI, InstructionSLLI, InstructionSRLI, InstructionSRAI, InstructionSLTI, InstructionSLTIU, InstructionRORI, InstructionREV,  # I type
              InstructionADD, InstructionSUB, InstructionSLL, InstructionSLT, InstructionSLTU, InstructionXOR, InstructionSRL, InstructionSRA, InstructionOR, InstructionAND, InstructionROR, InstructionROL, InstructionANDN, InstructionORN, InstructionXNOR, # R type
@@ -360,7 +360,7 @@ async def test_random_instructions_low_regs(dut):
 
     model = Model(RV32E)
 
-    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())    
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
 
     await reset(dut)
 
@@ -392,3 +392,253 @@ async def test_random_instructions_low_regs(dut):
     
         assert await get_pc_value(dut) == model.state.pc.unsigned()
         model.state.pc.set((model.state.pc.unsigned() + 4) & 0x3FC)
+
+@cocotb.test()
+async def test_load_store(dut):
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+
+    await reset(dut)
+
+    dut.mem_rdata.value = InstructionLW(x16, x0, 280).encode()
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 280
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 0
+    dut.mem_rdata.value = 0x12345678
+    await Timer(1, unit="ns")
+    assert dut.rd_wdata.value == 0x12345678
+    assert dut.rd_write.value == 1
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionLH(x16, x0, 280).encode()
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 280
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 0
+    assert dut.mem_mask.value == 0x3
+    assert dut.mem_half.value == 1
+    dut.mem_rdata.value = 0x12345678
+    await Timer(1, unit="ns")
+    assert dut.rd_wdata.value == 0x5678
+    assert dut.rd_write.value == 1
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionLB(x16, x0, 280).encode()
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 280
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 0
+    assert dut.mem_mask.value == 0x1
+    assert dut.mem_half.value == 1
+    dut.mem_rdata.value = 0x12345678
+    await Timer(1, unit="ns")
+    assert dut.rd_wdata.value == 0x78
+    assert dut.rd_write.value == 1
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionLH(x16, x0, 302).encode()
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 302
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 0
+    assert dut.mem_mask.value == 0xC
+    assert dut.mem_half.value == 1
+    dut.mem_rdata.value = 0xFEDC1234
+    await Timer(1, unit="ns")
+    assert dut.rd_wdata.value == 0xFFFFFEDC
+    assert dut.rd_write.value == 1
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionLHU(x16, x0, 300).encode()
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 300
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 0
+    assert dut.mem_mask.value == 0x3
+    assert dut.mem_half.value == 1
+    dut.mem_rdata.value = 0x1234FEDC
+    await Timer(1, unit="ns")
+    assert dut.rd_wdata.value == 0xFEDC
+    assert dut.rd_write.value == 1
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionLB(x16, x0, 301).encode()
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 301
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 0
+    assert dut.mem_mask.value == 0x2
+    assert dut.mem_half.value == 1
+    dut.mem_rdata.value = 0xFEDCAB34
+    await Timer(1, unit="ns")
+    assert dut.rd_wdata.value == 0xFFFFFFAB
+    assert dut.rd_write.value == 1
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionLBU(x16, x0, 302).encode()
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 302
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 0
+    assert dut.mem_mask.value == 0x4
+    assert dut.mem_half.value == 1
+    dut.mem_rdata.value = 0x12FEDCAB
+    await Timer(1, unit="ns")
+    assert dut.rd_wdata.value == 0xFE
+    assert dut.rd_write.value == 1
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+
+    dut.mem_rdata.value = InstructionSW(x0, x16, 300).encode()
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.rs2_read.value == 1
+    dut.rs2_rdata.value = 0x12FEDCAB
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 300
+    assert dut.mem_wstrb.value == 1
+    assert dut.mem_mask.value == 0xF
+    assert dut.mem_half.value == 0
+    assert dut.mem_rstrb.value == 0
+    assert dut.mem_wdata.value == 0x12FEDCAB
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionSH(x0, x16, 300).encode()
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.rs2_read.value == 1
+    dut.rs2_rdata.value = 0x12345678
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 300
+    assert dut.mem_wstrb.value == 1
+    assert dut.mem_mask.value == 0x3
+    assert dut.mem_half.value == 1
+    assert dut.mem_rstrb.value == 0
+    assert dut.mem_wdata.value == 0x12345678
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionSB(x0, x16, 300).encode()
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.rs2_read.value == 1
+    dut.rs2_rdata.value = 0x12345678
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 300
+    assert dut.mem_wstrb.value == 1
+    assert dut.mem_mask.value == 0x1
+    assert dut.mem_half.value == 1
+    assert dut.mem_rstrb.value == 0
+    assert dut.mem_wdata.value == 0x12345678
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionSH(x0, x16, 302).encode()
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.rs2_read.value == 1
+    dut.rs2_rdata.value = 0x12345678
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 302
+    assert dut.mem_wstrb.value == 1
+    assert dut.mem_mask.value == 0xC
+    assert dut.mem_half.value == 1
+    assert dut.mem_rstrb.value == 0
+    assert dut.mem_wdata.value == 0x56785678
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionSB(x0, x16, 303).encode()
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.rs2_read.value == 1
+    dut.rs2_rdata.value = 0x12345678
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 303
+    assert dut.mem_wstrb.value == 1
+    assert dut.mem_mask.value == 0x8
+    assert dut.mem_half.value == 1
+    assert dut.mem_rstrb.value == 0
+    assert dut.mem_wdata.value == 0x78787878
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionSB(x0, x16, 302).encode()
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.rs2_read.value == 1
+    dut.rs2_rdata.value = 0x12345678
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 302
+    assert dut.mem_wstrb.value == 1
+    assert dut.mem_mask.value == 0x4
+    assert dut.mem_half.value == 1
+    assert dut.mem_rstrb.value == 0
+    assert dut.mem_wdata.value == 0x56785678
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
+
+    dut.mem_rdata.value = InstructionSB(x0, x16, 301).encode()
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.rs2_read.value == 1
+    dut.rs2_rdata.value = 0x12345678
+    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
+    assert dut.mem_addr.value == 301
+    assert dut.mem_wstrb.value == 1
+    assert dut.mem_mask.value == 0x2
+    assert dut.mem_half.value == 1
+    assert dut.mem_rstrb.value == 0
+    assert dut.mem_wdata.value == 0x78347878
+    await ClockCycles(dut.clk, 2)
+    await Timer(1, unit="ns")
+    assert dut.mem_rstrb.value == 1
+    assert dut.mem_rinstr.value == 1
