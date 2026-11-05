@@ -19,7 +19,20 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
     output reg [31:0] gpio_mask_out,
     output reg        gpio_set_out,
     output reg        gpio_set_oe,
-    input  [31:0] gpio_in
+    input  [31:0] gpio_in,
+
+    output wire [31:0] fifo_wdata,
+    output reg  [3:0]  fifo_wr,
+    output wire [3:0]  fifo_rd,
+
+    input  [31:0]      fifo_rdata_0,
+    input  [31:0]      fifo_rdata_1,
+    input  [31:0]      fifo_rdata_2,
+    input  [31:0]      fifo_rdata_3,
+    input  [3:0]       fifo_readable,
+    input  [3:0]       fifo_writable,
+
+    input              quantum
 
 );
 
@@ -43,8 +56,8 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
     wire        femto_rd_write;
     wire        femto_rs1_read;
     wire        femto_rs2_read;
-    wire        femto_reg_wbusy = 1'b0;
-    wire        femto_reg_rbusy = 1'b0;
+    wire        femto_reg_wbusy;
+    wire        femto_reg_rbusy;
 
     reg [31:0] gpio_action_mask;
 
@@ -96,23 +109,64 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
         .data_out(femto_rdata)
     );
 
-    // GPIO handling
-    function [31:0] gpio_rdata(input [4:0] reg_id);
+    // High reg read handling
+    function [31:0] reg_rdata(input [4:0] reg_id);
         begin
             case (reg_id)
+            5'd16: reg_rdata = fifo_rdata_0;
+            5'd17: reg_rdata = fifo_rdata_1;
+            5'd18: reg_rdata = fifo_rdata_2;
+            5'd19: reg_rdata = fifo_rdata_3;
+
             // x21 read: gpio pins -> x21
-            5'd21: gpio_rdata = gpio_in;
+            5'd21: reg_rdata = gpio_in;
 
             // x26 read: gpio action mask -> x26
-            5'd26: gpio_rdata = gpio_action_mask;
+            5'd26: reg_rdata = gpio_action_mask;
 
-            default: gpio_rdata = 32'b0;
+            default: reg_rdata = 32'b0;
             endcase
         end
     endfunction
 
-    assign femto_rs1_rdata = gpio_rdata(femto_rs1_id);
-    assign femto_rs2_rdata = gpio_rdata(femto_rs2_id);
+    assign femto_rs1_rdata = reg_rdata(femto_rs1_id);
+    assign femto_rs2_rdata = reg_rdata(femto_rs2_id);
+
+    function reg reg_rbusy(input [4:0] reg_id);
+        begin
+            case (reg_id)
+            5'd16: reg_rbusy = !fifo_readable[0];
+            5'd17: reg_rbusy = !fifo_readable[1];
+            5'd18: reg_rbusy = !fifo_readable[2];
+            5'd19: reg_rbusy = !fifo_readable[3];
+
+            // x21 read: gpio pins -> x21
+            5'd21: reg_rbusy = 1'b0;
+
+            // x26 read: gpio action mask -> x26
+            5'd26: reg_rbusy = 1'b0;
+
+            default: reg_rbusy = 1'b0;
+            endcase
+        end
+    endfunction
+
+    assign femto_reg_rbusy = reg_rbusy(femto_rs1_id) || reg_rbusy(femto_rs2_id);
+
+    function reg reg_wbusy(input [4:0] reg_id);
+        begin
+            case (reg_id)
+            5'd16: reg_wbusy = !fifo_writable[0];
+            5'd17: reg_wbusy = !fifo_writable[1];
+            5'd18: reg_wbusy = !fifo_writable[2];
+            5'd19: reg_wbusy = !fifo_writable[3];
+            5'd20: reg_wbusy = !quantum;
+            default: reg_wbusy = 1'b0;
+            endcase
+        end
+    endfunction
+
+    assign femto_reg_wbusy = reg_wbusy(femto_rd_id);
 
     wire [31:0] masked_gpio_set = femto_rd_wdata & gpio_action_mask;
     wire [31:0] masked_gpio_clear = ~femto_rd_wdata & gpio_action_mask;
@@ -133,10 +187,19 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
     end
 
     always @(*) begin
+        gpio_data_out = 32'b0;
+        gpio_mask_out = 32'b0;
         gpio_set_out = 1'b0;
         gpio_set_oe = 1'b0;
+        fifo_wr = 4'b0;
 
         case (femto_rd_id)
+            // x16-x19 - FIFO write
+            5'd16: fifo_wr = 4'b0001;
+            5'd17: fifo_wr = 4'b0010;
+            5'd18: fifo_wr = 4'b0100;
+            5'd19: fifo_wr = 4'b1000;
+
             // x21 write: (x26 & x21) -> gpio pins
             5'd21: begin
                 gpio_data_out = femto_rd_wdata;
@@ -173,11 +236,12 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
                 gpio_set_oe = 1'b1;
             end
 
-            default: begin
-                gpio_data_out = 32'b0;
-                gpio_mask_out = 32'b0;
-            end
+            default: ;
         endcase
     end
+
+    assign fifo_wdata = femto_rd_wdata;
+    assign fifo_rd = {femto_rs1_id == 5'd16, femto_rs1_id == 5'd17, femto_rs1_id == 5'd18, femto_rs1_id == 5'd19} |
+                     {femto_rs2_id == 5'd16, femto_rs2_id == 5'd17, femto_rs2_id == 5'd18, femto_rs2_id == 5'd19};
 
 endmodule

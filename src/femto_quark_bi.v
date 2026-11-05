@@ -259,6 +259,7 @@ module FemtoRV32 #(parameter PC_WIDTH=10) (
    wire [31:0] debug_instr = {instr, 2'b11};
 `endif
 
+   /* verilator lint_off WIDTH */
    wire [PC_WIDTH-1:0] PCplus4 = {PC[PC_WIDTH-1:2] + 30'd1, 2'b00};
 
    // Branch address comes from the adder, adder must be full width for AUIPC
@@ -268,10 +269,6 @@ module FemtoRV32 #(parameter PC_WIDTH=10) (
 
    // Destination of load/store comes from the adder
    wire [ADDR_WIDTH-1:0] loadstore_addr = aluPlus[ADDR_WIDTH-1:0];
-
-   /* verilator lint_off WIDTH */
-   // internal address registers and cycles counter may have less than
-   // 32 bits, so we deactivate width test for mem_addr and writeBackData
 
    wire [PC_WIDTH-1:0] PC_new =
       isJALR           ? {aluPlus[PC_WIDTH-1:2],2'b00} :  // Force restrict PC to be a multiple of 4
