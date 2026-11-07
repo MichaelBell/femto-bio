@@ -14,6 +14,16 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
 
     input clk,
     input rst_n,
+    input core_enable,
+
+    // APB interface
+    input  [12:0] paddr,
+    input         psel,
+    input         penable,
+    input         pwrite,
+    input  [31:0] pwdata,
+    output [31:0] prdata,
+    output        pready,
 
     output reg [31:0] gpio_data_out,
     output reg [31:0] gpio_mask_out,
@@ -47,6 +57,17 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
     wire        femto_rbusy;
     wire        femto_wbusy;
 
+    wire [RAM_WIDTH-1:0] ram_addr;
+    wire [31:0] ram_wdata;
+    wire [31:0] ram_rdata;
+    wire  [3:0] ram_mask;
+    wire        ram_half;
+    wire        ram_wstrb;
+    wire        ram_rstrb;
+    wire        ram_rinstr;
+    wire        ram_rbusy;
+    wire        ram_wbusy;
+
     wire [4:0]  femto_rd_id;
     wire [31:0] femto_rd_wdata;
     wire [4:0]  femto_rs1_id;
@@ -63,7 +84,7 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
 
     FemtoRV32 #(.PC_WIDTH(RAM_WIDTH)) i_femtorv(
         .clk(clk),
-        .resetn(rst_n),
+        .resetn(rst_n & core_enable),
 
         .mem_addr(femto_addr),
         .mem_wdata(femto_wdata),
@@ -89,6 +110,41 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
         .reg_rbusy(femto_reg_rbusy)   // asserted while register read should block
     );
 
+    femto_ram_mux #(.RAM_WIDTH(RAM_WIDTH)) i_femtoram_mux (
+        .clk(clk),
+        .rst_n(rst_n),
+
+        .paddr(paddr[RAM_WIDTH-1:0]),
+        .psel(psel & paddr[12]),
+        .penable(penable),
+        .pwrite(pwrite),
+        .pwdata(pwdata),
+        .prdata(prdata),
+        .pready(pready),
+
+        .core_rstrb(femto_rstrb),
+        .core_rinstr(femto_rinstr),
+        .core_wstrb(femto_wstrb),
+        .core_mask(femto_mask),
+        .core_addr(femto_addr[RAM_WIDTH-1:0]),
+        .core_half(femto_half),
+        .core_rbusy(femto_rbusy),
+        .core_wbusy(femto_wbusy),
+        .core_wdata(femto_wdata),
+        .core_rdata(femto_rdata),
+
+        .ram_rstrb(ram_rstrb),
+        .ram_rinstr(ram_rinstr),
+        .ram_wstrb(ram_wstrb),
+        .ram_mask(ram_mask),
+        .ram_addr(ram_addr),
+        .ram_half(ram_half),
+        .ram_rbusy(ram_rbusy),
+        .ram_wbusy(ram_wbusy),
+        .ram_wdata(ram_wdata),
+        .ram_rdata(ram_rdata)
+    );
+
     femto_ram #(.RAM_WIDTH(RAM_WIDTH)) i_femtoram (
         `ifdef USE_POWER_PINS
         .VDD  (VDD),
@@ -97,16 +153,16 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
 
         .clk(clk),
         .rst_n(rst_n),
-        .rstrb(femto_rstrb),
-        .rinstr(femto_rinstr),
-        .wstrb(femto_wstrb),
-        .mask(femto_mask),
-        .addr(femto_addr[RAM_WIDTH-1:0]),
-        .half(femto_half),
-        .rbusy(femto_rbusy),
-        .wbusy(femto_wbusy),
-        .data_in(femto_wdata),
-        .data_out(femto_rdata)
+        .rstrb(ram_rstrb),
+        .rinstr(ram_rinstr),
+        .wstrb(ram_wstrb),
+        .mask(ram_mask),
+        .addr(ram_addr),
+        .half(ram_half),
+        .rbusy(ram_rbusy),
+        .wbusy(ram_wbusy),
+        .data_in(ram_wdata),
+        .data_out(ram_rdata)
     );
 
     // High reg read handling
