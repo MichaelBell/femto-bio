@@ -10,6 +10,8 @@ module tb ();
     wire [31:0] gpio_in;
 
     wire uart_tx = gpio_out[3];
+    reg uart_rx;
+    assign gpio_in[2] = uart_rx;
 
     wire [15:0] paddr;
     wire psel;

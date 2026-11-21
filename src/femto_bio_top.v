@@ -176,6 +176,7 @@ module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
         for (i = NUM_CORES-1; i >= 0; i = i - 1) begin
             event_flags_new = (event_flags_new | event_flags_set_core[i]) & ~event_flags_clr_core[i];
         end
+        event_flags_new = (event_flags_new | host_event_set) & ~host_event_clr;
     end
 
     always @(posedge clk) begin

@@ -151,28 +151,28 @@ async def test_mem_access(dut):
 
     await ClockCycles(dut.clk, 5)
 
-    await apb_read(dut, 0x0) == 0
-    await apb_read(dut, 0x4) == 0x04000280
-    await apb_read(dut, 0xc) == 0
-    await apb_read(dut, 0x40) == 0x55000000
+    assert await apb_read(dut, 0x0) == 0
+    assert await apb_read(dut, 0x4) == 0x04000280
+    assert await apb_read(dut, 0xc) == 0
+    assert await apb_read(dut, 0x40) == 0x55000000
 
     await apb_write(dut, 0x38, 0x1)
-    await apb_read(dut, 0x40) == 0x55000001
+    assert await apb_read(dut, 0x40) == 0x55000001
     await apb_write(dut, 0x3c, 0x1)
-    await apb_read(dut, 0x40) == 0x55000000
+    assert await apb_read(dut, 0x40) == 0x55000000
     await apb_write(dut, 0x38, 0xFFFFFF)
-    await apb_read(dut, 0x40) == 0x55FFFFFF
+    assert await apb_read(dut, 0x40) == 0x55FFFFFF
     await apb_write(dut, 0x3c, 0xFFF000)
-    await apb_read(dut, 0x40) == 0x55000FFF
+    assert await apb_read(dut, 0x40) == 0x55000FFF
     await apb_write(dut, 0x3c, 0xFFF)
-    await apb_read(dut, 0x40) == 0x55000000
+    assert await apb_read(dut, 0x40) == 0x55000000
 
     await apb_write(dut, 0x9100, 0x12345678, 2)
     assert await apb_read(dut, 0x9100, 2) == 0x12345678
 
     # Start program
     await apb_write(dut, 0x0, 0x1)
-    await apb_read(dut, 0x0) == 1
+    assert await apb_read(dut, 0x0) == 1
 
     for _ in range(100):
         await ClockCycles(dut.clk, 1)
@@ -218,6 +218,19 @@ async def expect_byte(dut, uart_byte, tx_pin=None, bit_time=8680):
     await Timer(bit_time // 2, "ns")
     assert tx_pin.value == 1
 
+async def send_byte(dut, val, rx_pin=None, bit_time=8680):
+    if rx_pin is None:
+        rx_pin = dut.uart_rx
+
+    rx_pin.value = 0
+    await Timer(bit_time, "ns")
+    for i in range(8):
+        rx_pin.value = val & 1
+        await Timer(bit_time, "ns")
+        val >>= 1
+    rx_pin.value = 1
+    await Timer(bit_time, "ns")
+
 @cocotb.test()
 async def test_uart_tx_program(dut):
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
@@ -258,3 +271,32 @@ async def test_uart_tx_program(dut):
 
     # Expect UART TX to transmit the byte 0x5A
     await expect_byte(dut, 0x5A)
+
+@cocotb.test()
+async def test_uart_rx_program(dut):
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+
+    dut.gpio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 5)
+    dut.rst_n.value = 1
+
+    await ClockCycles(dut.clk, 5)
+
+    # Load UART RX program into core 0
+    await load_program(dut, 0x9000, "../bioasm/uart_rx.hex")
+
+    # Set quantum for core 0 to 115200 baud assuming 50MHz clock
+    await apb_write(dut, 0x50, ((50_000_000 * 256) // (115200 * 5)) << 8)
+
+    # Start core 0
+    await apb_write(dut, 0x0, 0x1)
+
+    # Wait for core to init
+    await ClockCycles(dut.clk, 50)
+
+    # Send byte 0x5A to UART RX
+    await send_byte(dut, 0x5A)
+
+    # Read byte from FIFO
+    assert await apb_read(dut, 0x24) == 0x5A  # Read from UART RX FIFO
