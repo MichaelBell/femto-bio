@@ -77,12 +77,12 @@ module femto_reg_file (
     reg rst;
     always @(posedge clk) begin
         if (~rst_n) begin
-            wdata <= 32'b0;
             rst <= 1'b1;
+            wdata <= 32'b0;
         end
-        else if (we) begin
-            wdata <= rd_wdata;
+        else begin
             rst <= 1'b0;
+            if (we) wdata <= rd_wdata;
         end
     end
 

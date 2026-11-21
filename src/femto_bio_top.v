@@ -58,6 +58,11 @@ module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
     wire [3:0] fifo_writable;
     wire [3:0] fifo_level [3:0];
 
+    reg [23:0] event_flags_r;
+    reg [23:0] event_flags_new;
+    wire [31:24] event_flags_fifo;
+    wire [31:0] event_flags = {event_flags_fifo, event_flags_r};
+
     wire [31:0] gpio_data_out_core [NUM_CORES-1:0];
     wire [31:0] gpio_mask_out_core [NUM_CORES-1:0];
     wire gpio_set_out_core [NUM_CORES-1:0];
@@ -67,12 +72,15 @@ module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
     wire [3:0] fifo_wr_core [NUM_CORES-1:0];
     wire [3:0] fifo_rd_core [NUM_CORES-1:0];
 
+    wire [23:0] event_flags_set_core [NUM_CORES-1:0];
+    wire [23:0] event_flags_clr_core [NUM_CORES-1:0];
+
     integer i;
     genvar k;
 
     generate
     for(k = 0; k < NUM_CORES; k = k + 1) begin: cores
-        femto_bio_core #(.RAM_WIDTH(RAM_WIDTH)) i_femto_bio_core (
+        femto_bio_core #(.RAM_WIDTH(RAM_WIDTH), .CORE_ID(k)) i_femto_bio_core (
         `ifdef USE_POWER_PINS
         .VDD  (VDD),
         .VSS  (VSS),
@@ -106,6 +114,10 @@ module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
         .fifo_readable(fifo_readable),
         .fifo_writable(fifo_writable),
 
+        .event_flags(event_flags),
+        .event_flags_set(event_flags_set_core[k]),
+        .event_flags_clr(event_flags_clr_core[k]),
+
         .quantum(1'b1)
     );
     end
@@ -132,14 +144,39 @@ module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
         for (i = NUM_CORES-1; i >= 0; i = i - 1) begin
             if (gpio_set_oe_core[i]) begin
                 gpio_mask_oe = gpio_mask_oe | gpio_mask_out_core[i];
-                gpio_data_oe = gpio_data_oe | (gpio_data_out_core[i] & gpio_mask_out_core[i]);
+                gpio_data_oe = (gpio_data_oe & ~gpio_mask_out_core[i]) | (gpio_data_out_core[i] & gpio_mask_out_core[i]);
             end
             if (gpio_set_out_core[i]) begin
                 gpio_mask_out = gpio_mask_out | gpio_mask_out_core[i];
-                gpio_data_out = gpio_data_out | (gpio_data_out_core[i] & gpio_mask_out_core[i]);
+                gpio_data_out = (gpio_data_out & ~gpio_mask_out_core[i]) | (gpio_data_out_core[i] & gpio_mask_out_core[i]);
             end
         end
     end
+
+    wire [23:0] host_event_set;
+    wire [23:0] host_event_clr;
+
+    always @(*) begin
+        event_flags_new = event_flags_r;
+        for (i = NUM_CORES-1; i >= 0; i = i - 1) begin
+            event_flags_new = (event_flags_new | event_flags_set_core[i]) & ~event_flags_clr_core[i];
+        end
+    end
+
+    always @(posedge clk) begin
+        if (~rst_n)
+            event_flags_r <= 24'b0;
+        else
+            event_flags_r <= event_flags_new;
+    end
+
+    // Placeholder - set event flags to empty and full for each FIFO, full BIO has this configurable.
+    assign event_flags_fifo = {
+        ~fifo_writable[3], ~fifo_readable[3],
+        ~fifo_writable[2], ~fifo_readable[2],
+        ~fifo_writable[1], ~fifo_readable[1],
+        ~fifo_writable[0], ~fifo_readable[0]
+    };
 
     always @(posedge clk) begin
         if (~rst_n) begin
@@ -169,8 +206,9 @@ module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
     endgenerate
 
     reg config_addr;
-    wire [31:0] prdata_config;
+    reg [31:0] prdata_config;
     reg [NUM_CORES-1:0] core_addr;
+    wire config_write = config_addr & psel & penable & pwrite;
     
     always @(posedge clk) begin
         if (~rst_n)
@@ -183,7 +221,20 @@ module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
     assign pready = config_addr ? psel & penable :
                     |(core_addr & pready_core);
     assign prdata = prdata_r;
-    assign prdata_config = {31'b0, core_enable[0]};
+
+    wire [15:0] ram_size = 1 << RAM_WIDTH;
+    wire [7:0] num_cores = NUM_CORES;
+    always @(*) begin
+        case (paddr[14:0])
+            /* verilator lint_off WIDTHEXPAND */
+            15'h0000: prdata_config = core_enable;  // ctrl
+            /* verilator lint_on WIDTHEXPAND */
+            15'h0004: prdata_config = {ram_size, num_cores, 8'h80};  // cfg
+            15'h000c: prdata_config = {16'b0, fifo_level[3], fifo_level[2], fifo_level[1], fifo_level[0]};  // flevel
+            15'h0040: prdata_config = event_flags;  // event status
+            default: prdata_config = 32'b0;
+        endcase
+    end
 
     always @(*) begin
         prdata_r = 32'b0;
@@ -214,7 +265,7 @@ module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
                 core_enable[k] <= 1'b0;
             end
             else begin
-                if (config_addr & psel & penable & pwrite & (paddr[14:0] == 15'b0)) begin
+                if (config_write & (paddr[14:0] == 15'b0)) begin
                     core_enable[k] <= pwdata[k];
                 end
             end
@@ -222,5 +273,7 @@ module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
         end
     endgenerate
 
+    assign host_event_set = config_write & (paddr[14:0] == 15'h0038) ? pwdata[23:0] : 24'b0;
+    assign host_event_clr = config_write & (paddr[14:0] == 15'h003c) ? pwdata[23:0] : 24'b0;
 
 endmodule

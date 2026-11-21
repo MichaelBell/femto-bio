@@ -40,12 +40,28 @@ module tt_ecp5_wrapper (
     wire [31:0] gpio_out;
     wire [31:0] gpio_oe;
 
+    wire [15:0] paddr;
+    wire        psel;
+    wire        penable;
+    wire        pwrite;
+    wire [31:0] pwdata;
+    wire [31:0] prdata;
+    wire        pready;
+
     femto_bio i_bio(
         .clk(clk),
         .rst_n(rst_n),
         .gpio_out(gpio_out),
         .gpio_oe(gpio_oe),
-        .gpio_in({2'b0, an_in, ui_in, uio_in, 8'b0})
+        .gpio_in({2'b0, an_in, ui_in, uio_in, 8'b0}),
+
+        .paddr(paddr),
+        .psel(psel),
+        .penable(penable),
+        .pwrite(pwrite),
+        .pwdata(pwdata),
+        .prdata(prdata),
+        .pready(pready)
     );
 
     assign an_out = gpio_out[29:24];
@@ -56,5 +72,22 @@ module tt_ecp5_wrapper (
 
     assign led = gpio_out[31];
     assign uo_out = gpio_out[7:0];
+
+    // Start both cores after reset
+    reg [1:0] state;
+    always @(posedge clk) begin
+        if (~rst_n)
+            state <= 2'b0;
+        else if (state < 2'b10)
+            state <= state + 1'b1;
+        else if (pready)
+            state <= 2'b11;
+    end
+
+    assign psel = (state == 2'b01);
+    assign penable = (state == 2'b10);
+    assign pwrite = (state[1] ^ state[0]);
+    assign pwdata = 32'b11;
+    assign paddr = 16'b0;
 
 endmodule

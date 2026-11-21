@@ -6,7 +6,7 @@
 
 `default_nettype none
 
-module femto_bio_core #(parameter RAM_WIDTH=10) (
+module femto_bio_core #(parameter RAM_WIDTH=10, CORE_ID=0) (
     `ifdef USE_POWER_PINS
     inout  wire VDD,
     inout  wire VSS,
@@ -41,6 +41,10 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
     input  [31:0]      fifo_rdata_3,
     input  [3:0]       fifo_readable,
     input  [3:0]       fifo_writable,
+
+    input  [31:0]      event_flags,
+    output reg [23:0]  event_flags_set,
+    output reg [23:0]  event_flags_clr,
 
     input              quantum
 
@@ -81,6 +85,7 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
     wire        femto_reg_rbusy;
 
     reg [31:0] gpio_action_mask;
+    reg [31:0] event_mask;
 
     FemtoRV32 #(.PC_WIDTH(RAM_WIDTH)) i_femtorv(
         .clk(clk),
@@ -165,6 +170,14 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
         .data_out(ram_rdata)
     );
 
+    reg [29:0] clk_count;
+    always @(posedge clk) begin
+        if (!rst_n)
+            clk_count <= 30'b0;
+        else if (core_enable)
+            clk_count <= clk_count + 1;
+    end
+
     // High reg read handling
     function [31:0] reg_rdata(input [4:0] reg_id);
         begin
@@ -179,6 +192,12 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
 
             // x26 read: gpio action mask -> x26
             5'd26: reg_rdata = gpio_action_mask;
+
+            // x30 read: event flags -> x30
+            5'd30: reg_rdata = event_flags;
+
+            // x31 read: [31:30] -> core ID; [29:0] -> cpu clocks since reset
+            5'd31: reg_rdata = {CORE_ID[1:0], clk_count};
 
             default: reg_rdata = 32'b0;
             endcase
@@ -201,6 +220,9 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
 
             // x26 read: gpio action mask -> x26
             5'd26: reg_rbusy = 1'b0;
+
+            // x30 read: halt until ((x27 & events) != 0), and return unmasked `events` value
+            5'd30: reg_rbusy = (event_mask & event_flags) == 0;
 
             default: reg_rbusy = 1'b0;
             endcase
@@ -230,12 +252,16 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
     always @(posedge clk) begin
         if (!rst_n) begin
             gpio_action_mask <= 32'b0;
+            event_mask <= 32'b0;
         end
         else if (femto_rd_write) begin
             case (femto_rd_id)
 
             // x26 write: update the gpio action mask
             5'd26: gpio_action_mask <= femto_rd_wdata;
+
+            // x27 write: mask event sensitivity bits
+            5'd27: event_mask <= femto_rd_wdata;
 
             default: ;
             endcase
@@ -248,7 +274,10 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
         gpio_set_out = 1'b0;
         gpio_set_oe = 1'b0;
         fifo_wr = 4'b0;
+        event_flags_set = 24'b0;
+        event_flags_clr = 24'b0;
 
+        if (femto_rd_write)
         case (femto_rd_id)
             // x16-x19 - FIFO write
             5'd16: fifo_wr = 4'b0001;
@@ -291,6 +320,9 @@ module femto_bio_core #(parameter RAM_WIDTH=10) (
                 gpio_mask_out = masked_gpio_set;
                 gpio_set_oe = 1'b1;
             end
+
+            5'd28: event_flags_set = femto_rd_wdata[23:0];
+            5'd29: event_flags_clr = femto_rd_wdata[23:0];
 
             default: ;
         endcase

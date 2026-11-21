@@ -139,11 +139,28 @@ async def test_mem_access(dut):
 
     await ClockCycles(dut.clk, 5)
 
+    await apb_read(dut, 0x0) == 0
+    await apb_read(dut, 0x4) == 0x04000280
+    await apb_read(dut, 0xc) == 0
+    await apb_read(dut, 0x40) == 0x55000000
+
+    await apb_write(dut, 0x38, 0x1)
+    await apb_read(dut, 0x40) == 0x55000001
+    await apb_write(dut, 0x3c, 0x1)
+    await apb_read(dut, 0x40) == 0x55000000
+    await apb_write(dut, 0x38, 0xFFFFFF)
+    await apb_read(dut, 0x40) == 0x55FFFFFF
+    await apb_write(dut, 0x3c, 0xFFF000)
+    await apb_read(dut, 0x40) == 0x55000FFF
+    await apb_write(dut, 0x3c, 0xFFF)
+    await apb_read(dut, 0x40) == 0x55000000
+
     await apb_write(dut, 0x9100, 0x12345678, 2)
     assert await apb_read(dut, 0x9100, 2) == 0x12345678
 
     # Start program
     await apb_write(dut, 0x0, 0x1)
+    await apb_read(dut, 0x0) == 1
 
     for _ in range(100):
         await ClockCycles(dut.clk, 1)
