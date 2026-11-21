@@ -81,6 +81,54 @@ async def test_start(dut):
         else:
             assert False, "Timeout waiting for gpio_out to become 0"
 
+    # Disable the core
+    await apb_write(dut, 0x0, 0x0)
+
+    for _ in range(100):
+        await ClockCycles(dut.clk, 1)
+        assert dut.gpio_out.value == 0
+
+    # Edit program on core 1 so it toggles pin 12
+    await apb_write(dut, 0xb000, 0x00001537, 2)
+
+    # Enable core 1
+    await apb_write(dut, 0x0, 0x2)
+
+    for _ in range(10):
+        for _ in range(100):
+            await ClockCycles(dut.clk, 1)
+            if dut.gpio_out.value == 0x1000:
+                break
+        else:
+            assert False, "Timeout waiting for gpio_out to become 0x2000"
+    
+        for _ in range(100):
+            await ClockCycles(dut.clk, 1)
+            if dut.gpio_out.value == 0:
+                break
+        else:
+            assert False, "Timeout waiting for gpio_out to become 0"
+
+
+    # Enable core 0
+    await apb_write(dut, 0x0, 0x3)
+
+    for _ in range(10):
+        for _ in range(100):
+            await ClockCycles(dut.clk, 1)
+            if dut.gpio_out.value == 0x3000:
+                break
+        else:
+            assert False, "Timeout waiting for gpio_out to become 0x2000"
+    
+        for _ in range(100):
+            await ClockCycles(dut.clk, 1)
+            if dut.gpio_out.value == 0:
+                break
+        else:
+            assert False, "Timeout waiting for gpio_out to become 0"
+
+
 @cocotb.test()
 async def test_mem_access(dut):
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
