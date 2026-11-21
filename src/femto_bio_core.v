@@ -76,14 +76,16 @@ module femto_bio_core #(parameter RAM_WIDTH=10, CORE_ID=0) (
     wire [31:0] femto_rd_wdata;
     wire [4:0]  femto_rs1_id;
     wire [4:0]  femto_rs2_id;
-    wire [31:0] femto_rs1_rdata;
-    wire [31:0] femto_rs2_rdata;
+    reg  [31:0] femto_rs1_rdata;
+    reg  [31:0] femto_rs2_rdata;
     wire        femto_rd_write;
     wire        femto_rs1_read;
     wire        femto_rs2_read;
-    wire        femto_reg_wbusy;
-    wire        femto_reg_rbusy;
+    reg        femto_reg_wbusy;
+    reg         femto_reg_rbusy;
 
+    // Maybe move these into the femto BIO reg file to allow
+    // them to be implemented as latches.
     reg [31:0] gpio_action_mask;
     reg [31:0] event_mask;
 
@@ -179,9 +181,11 @@ module femto_bio_core #(parameter RAM_WIDTH=10, CORE_ID=0) (
     end
 
     // High reg read handling
-    function [31:0] reg_rdata(input [4:0] reg_id);
-        begin
-            case (reg_id)
+    integer i;
+    reg [31:0] reg_rdata;
+    always @(*) begin
+        for (i = 0; i < 2; i = i + 1) begin
+            case (i == 0 ? femto_rs1_id : femto_rs2_id)
             5'd16: reg_rdata = fifo_rdata_0;
             5'd17: reg_rdata = fifo_rdata_1;
             5'd18: reg_rdata = fifo_rdata_2;
@@ -193,6 +197,8 @@ module femto_bio_core #(parameter RAM_WIDTH=10, CORE_ID=0) (
             // x26 read: gpio action mask -> x26
             5'd26: reg_rdata = gpio_action_mask;
 
+            5'd27: reg_rdata = event_mask;
+
             // x30 read: event flags -> x30
             5'd30: reg_rdata = event_flags;
 
@@ -201,50 +207,37 @@ module femto_bio_core #(parameter RAM_WIDTH=10, CORE_ID=0) (
 
             default: reg_rdata = 32'b0;
             endcase
+
+            if (i == 0)
+                femto_rs1_rdata = reg_rdata;
+            else
+                femto_rs2_rdata = reg_rdata;
         end
-    endfunction
+    end
 
-    assign femto_rs1_rdata = reg_rdata(femto_rs1_id);
-    assign femto_rs2_rdata = reg_rdata(femto_rs2_id);
-
-    function reg reg_rbusy(input [4:0] reg_id);
-        begin
-            case (reg_id)
-            5'd16: reg_rbusy = !fifo_readable[0];
-            5'd17: reg_rbusy = !fifo_readable[1];
-            5'd18: reg_rbusy = !fifo_readable[2];
-            5'd19: reg_rbusy = !fifo_readable[3];
-
-            // x21 read: gpio pins -> x21
-            5'd21: reg_rbusy = 1'b0;
-
-            // x26 read: gpio action mask -> x26
-            5'd26: reg_rbusy = 1'b0;
-
-            // x30 read: halt until ((x27 & events) != 0), and return unmasked `events` value
-            5'd30: reg_rbusy = (event_mask & event_flags) == 0;
-
-            default: reg_rbusy = 1'b0;
+    always @(*) begin
+        femto_reg_rbusy = 1'b0;
+        for (i = 0; i < 2; i = i + 1) begin
+            case (i == 0 ? femto_rs1_id : femto_rs2_id)
+            5'd16: femto_reg_rbusy = femto_reg_rbusy || !fifo_readable[0];
+            5'd17: femto_reg_rbusy = femto_reg_rbusy || !fifo_readable[1];
+            5'd18: femto_reg_rbusy = femto_reg_rbusy || !fifo_readable[2];
+            5'd19: femto_reg_rbusy = femto_reg_rbusy || !fifo_readable[3];
+            default: ;
             endcase
         end
-    endfunction
+    end
 
-    assign femto_reg_rbusy = reg_rbusy(femto_rs1_id) || reg_rbusy(femto_rs2_id);
-
-    function reg reg_wbusy(input [4:0] reg_id);
-        begin
-            case (reg_id)
-            5'd16: reg_wbusy = !fifo_writable[0];
-            5'd17: reg_wbusy = !fifo_writable[1];
-            5'd18: reg_wbusy = !fifo_writable[2];
-            5'd19: reg_wbusy = !fifo_writable[3];
-            5'd20: reg_wbusy = !quantum;
-            default: reg_wbusy = 1'b0;
-            endcase
-        end
-    endfunction
-
-    assign femto_reg_wbusy = reg_wbusy(femto_rd_id);
+    always @(*) begin
+        case (femto_rd_id)
+        5'd16: femto_reg_wbusy = !fifo_writable[0];
+        5'd17: femto_reg_wbusy = !fifo_writable[1];
+        5'd18: femto_reg_wbusy = !fifo_writable[2];
+        5'd19: femto_reg_wbusy = !fifo_writable[3];
+        5'd20: femto_reg_wbusy = !quantum;
+        default: femto_reg_wbusy = 1'b0;
+        endcase
+    end
 
     wire [31:0] masked_gpio_set = femto_rd_wdata & gpio_action_mask;
     wire [31:0] masked_gpio_clear = ~femto_rd_wdata & gpio_action_mask;

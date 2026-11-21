@@ -6,7 +6,7 @@ SIM ?= icarus
 WAVES ?= 1
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = femto_bio_top.v femto_bio_core.v femto_ram.v femto_quark_bi.v femto_reg_file.v femto_ram_mux.v regfifo.v
+PROJECT_SOURCES = femto_bio_top.v femto_bio_core.v femto_ram.v femto_quark_bi.v femto_reg_file.v femto_ram_mux.v regfifo.v pio_divider.v
 
 PROG ?= $(PWD)/../bioasm/blink.hex
 

@@ -9,6 +9,8 @@ module tb ();
     wire [31:0] gpio_oe;
     wire [31:0] gpio_in;
 
+    wire uart_tx = gpio_out[3];
+
     wire [15:0] paddr;
     wire psel;
     wire penable;

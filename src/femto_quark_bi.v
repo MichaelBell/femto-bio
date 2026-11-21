@@ -275,7 +275,8 @@ module FemtoRV32 #(parameter PC_WIDTH=10) (
       jumpToPCplusImm  ? {PCplusImm[PC_WIDTH-1:2],2'b00} :
                          PCplus4;
 
-   assign mem_addr = state[WAIT_INSTR_bit] | state[FETCH_INSTR_bit] ? PC     :
+   assign mem_addr = state[WAIT_INSTR_bit] | state[FETCH_INSTR_bit] |
+                     (state[WAIT_ALU_OR_MEM_bit] & ~isLoad & ~isStore) ? PC  :
                      state[EXECUTE_bit] & ~isLoad & ~isStore        ? PC_new :
                                                               loadstore_addr ;
 

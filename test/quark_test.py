@@ -224,7 +224,7 @@ async def reset(dut):
     await ClockCycles(dut.clk, 2)
 
 
-#@cocotb.test()
+@cocotb.test()
 async def test_start(dut):
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
 
@@ -323,7 +323,7 @@ async def test_start(dut):
             res |= ((a >> (31 - i)) & 1) << i
         assert await run_rev_instruction(dut, a, 0b11111) == res
 
-#@cocotb.test()
+@cocotb.test()
 async def test_quantum(dut):
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())    
 
@@ -336,7 +336,7 @@ async def test_quantum(dut):
     assert await run_alu_reg_instruction(dut, InstructionADD, a, b) == (a + b) & 0xFFFFFFFF    
     assert await run_quantum_write(dut, InstructionADD, a, b) == (a + b) & 0xFFFFFFFF
 
-#@cocotb.test()
+@cocotb.test()
 async def test_delayed_read(dut):
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())    
 
@@ -347,7 +347,7 @@ async def test_delayed_read(dut):
     for i in range(11):
         assert await run_alu_reg_instruction(dut, InstructionADD, a + i, b, 0 if (i & 1) != 0 else i+1) == (a + i + b) & 0xFFFFFFFF    
 
-#@cocotb.test()
+@cocotb.test()
 async def test_random_instructions_low_regs(dut):
     insns = [InstructionADDI, InstructionORI, InstructionXORI, InstructionANDI, InstructionSLLI, InstructionSRLI, InstructionSRAI, InstructionSLTI, InstructionSLTIU, InstructionRORI, InstructionREV,  # I type
              InstructionADD, InstructionSUB, InstructionSLL, InstructionSLT, InstructionSLTU, InstructionXOR, InstructionSRL, InstructionSRA, InstructionOR, InstructionAND, InstructionROR, InstructionROL, InstructionANDN, InstructionORN, InstructionXNOR, # R type
