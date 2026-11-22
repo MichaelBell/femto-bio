@@ -17,7 +17,7 @@
 // 0xE000 - 0xEFFF: Core 3 config
 // 0xF000 - 0xFFFF: Core 3 memory
 
-module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
+module femto_bio #(parameter RAM_WIDTH=11, parameter NUM_CORES=2) (
     `ifdef USE_POWER_PINS_FOR_RAM
     inout  wire VDD,
     inout  wire VSS,

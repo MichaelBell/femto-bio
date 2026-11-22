@@ -35,7 +35,7 @@
 `define NRV_ABI      "ilp32"
 `define NRV_OPTIMIZE "-Os"
 
-module FemtoRV32 #(parameter PC_WIDTH=10) (
+module FemtoRV32 #(parameter PC_WIDTH=11) (
    input         clk,
    input         resetn,     // set to 0 to reset the processor
 
@@ -213,6 +213,26 @@ module FemtoRV32 #(parameter PC_WIDTH=10) (
 
    /***************************************************************************/
 
+   reg [31:0] unzip;
+   reg [31:0] zip;
+   wire is_pack = isALUreg & instr[27];
+   wire is_zip = isALUimm & (instr[27] & ~instr[29]);
+
+   integer i;
+   always @(*) begin
+      for (i = 0; i < 16; i = i + 1)
+         zip[i*2 +: 2] = {aluIn1[i + 16], aluIn1[i]};
+   end
+
+   always @(*) begin
+      for (i = 0; i < 16; i = i + 1) begin
+         unzip[i] = aluIn1[2*i];
+         unzip[i+16] = aluIn1[2*i+1];
+      end
+   end
+
+   /***************************************************************************/
+
    // Notes:
    // - instr[30] is 1 for SUB and 0 for ADD
    // - for SUB, need to test also instr[5] to discriminate ADDI:
@@ -224,13 +244,14 @@ module FemtoRV32 #(parameter PC_WIDTH=10) (
       (* parallel_case *)
       case(1'b1)
       funct3Is[0]: aluOut = aluResult[31:0];
-      funct3Is[1]: aluOut = leftshift;
+      funct3Is[1]: aluOut = is_zip ? zip : leftshift;
       funct3Is[2]: aluOut = {31'b0, LT};
       funct3Is[3]: aluOut = {31'b0, LTU};
-      funct3Is[4]: aluOut = aluIn1 ^ aluInvIn2[31:0];
-      funct3Is[5]: aluOut = use_rev ? rev : shifter;
+      funct3Is[4]: aluOut = is_pack ? {aluIn2[15:0], aluIn1[15:0]} : aluIn1 ^ aluInvIn2[31:0];
+      funct3Is[5]: aluOut = is_zip ? unzip : 
+                            use_rev ? rev : shifter;
       funct3Is[6]: aluOut = aluIn1 | aluInvIn2[31:0];
-      funct3Is[7]: aluOut = aluIn1 & aluInvIn2[31:0];
+      funct3Is[7]: aluOut = is_pack ? {16'b0, aluIn2[7:0], aluIn1[7:0]} : aluIn1 & aluInvIn2[31:0];
       default: aluOut = aluResult[31:0];
       endcase
    end

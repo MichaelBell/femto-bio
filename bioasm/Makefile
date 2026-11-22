@@ -16,10 +16,10 @@ clean:
 	cd $(dir $(PROJECT_NAME)) && rm *.o *.elf *.bin *.hex
 
 %.o: %.c
-	$(CC) -O2 -I$(TINYQV_SDK) -march=rv32i -nostdlib -nostartfiles -ffreestanding -ffunction-sections -fdata-sections -Wall -Werror -lc -c $< -o $@
+	$(CC) -O2 -march=rv32e_zbkb -nostdlib -nostartfiles -ffreestanding -ffunction-sections -fdata-sections -Wall -Werror -lc -c $< -o $@
 
 %.o: %.s
-	$(AS) -march=rv32i $< -o $@
+	$(AS) -march=rv32i_zbkb $< -o $@
 
 $(PROJECT_NAME).elf: $(PROJECT_SOURCES:.c=.o)
 	$(LD) $^ -T memmap -o $@

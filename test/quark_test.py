@@ -13,6 +13,8 @@ from riscvmodel.isa import *
 from riscvmodel.variant import *
 from riscvmodel.model import Model
 
+PC_MASK = 0x7FC
+
 # Some riscvmodel fixes
 del InstructionSLTIU, InstructionSRAI, InstructionSLTU, InstructionSRL, InstructionJAL, InstructionJALR
 @isa("sltiu", RV32I, opcode=0b0010011, funct3=0b011)
@@ -108,11 +110,41 @@ class InstructionREV(InstructionISType):
         self.rs1 = random.randrange(0, variant.xlen)
         self.shamt.set(random.choice([0b00111, 0b11000, 0b11111]))
 
+@isa("pack", RV32I, opcode=0b0110011, funct3=0b100, funct7=0b0000100)
+class InstructionPACK(InstructionRType):
+    def execute(self, model: Model):
+        model.state.intreg[self.rd] = ((model.state.intreg[self.rs2] << 16) & 0xFFFF0000) | (model.state.intreg[self.rs1] & 0xFFFF)
+    
+@isa("packh", RV32I, opcode=0b0110011, funct3=0b111, funct7=0b0000100)
+class InstructionPACKH(InstructionRType):
+    def execute(self, model: Model):
+        model.state.intreg[self.rd] = ((model.state.intreg[self.rs2] << 8) & 0xFF00) | (model.state.intreg[self.rs1] & 0xFF)
+
+@isa("zip", RV32I, opcode=0b0010011, funct3=0b001, funct7=0b0000100)
+class InstructionZIP(InstructionISType):
+    def execute(self, model: Model):
+        res = 0
+        src = model.state.intreg[self.rs1].unsigned()
+        for i in range(16):
+            res |= ((src >> i) & 1) << (2 * i)
+            res |= ((src >> (i + 16)) & 1) << (2 * i + 1)
+        model.state.intreg[self.rd] = res
+    
+@isa("unzip", RV32I, opcode=0b0010011, funct3=0b101, funct7=0b0000100)
+class InstructionUNZIP(InstructionISType):
+    def execute(self, model: Model):
+        res = 0
+        src = model.state.intreg[self.rs1].unsigned()
+        for i in range(16):
+            res |= ((src >> (2 * i)) & 1) << i
+            res |= ((src >> (2 * i + 1)) & 1) << (i + 16)
+        model.state.intreg[self.rd] = res
+
 @isa("jal", RV32I, opcode=0b1101111)
 class InstructionJAL(InstructionJType):
     def execute(self, model: Model):
-        model.state.intreg[self.rd] = (model.state.pc.unsigned() + 4) & 0x3FC
-        model.state.pc = (model.state.pc + self.imm) & 0x3FC
+        model.state.intreg[self.rd] = (model.state.pc.unsigned() + 4) & PC_MASK
+        model.state.pc = (model.state.pc + self.imm) & PC_MASK
 
     def randomize(self, variant: Variant):
         self.rd = randrange(0, variant.xlen)
@@ -122,8 +154,8 @@ class InstructionJAL(InstructionJType):
 @isa("jalr", RV32I, opcode=0b1100111, funct3=0b000)
 class InstructionJALR(InstructionIType):
     def execute(self, model: Model):
-        model.state.intreg[self.rd] = (model.state.pc.unsigned() + 4) & 0x3FC
-        model.state.pc = (model.state.intreg[self.rs1] + self.imm) & 0x3FC
+        model.state.intreg[self.rd] = (model.state.pc.unsigned() + 4) & PC_MASK
+        model.state.pc = (model.state.intreg[self.rs1] + self.imm) & PC_MASK
 
 async def run_alu_reg_instruction(dut, inst, rs1_val, rs2_val, delay_cycles=0):
     assert dut.mem_rinstr.value == 1
@@ -349,8 +381,8 @@ async def test_delayed_read(dut):
 
 @cocotb.test()
 async def test_random_instructions_low_regs(dut):
-    insns = [InstructionADDI, InstructionORI, InstructionXORI, InstructionANDI, InstructionSLLI, InstructionSRLI, InstructionSRAI, InstructionSLTI, InstructionSLTIU, InstructionRORI, InstructionREV,  # I type
-             InstructionADD, InstructionSUB, InstructionSLL, InstructionSLT, InstructionSLTU, InstructionXOR, InstructionSRL, InstructionSRA, InstructionOR, InstructionAND, InstructionROR, InstructionROL, InstructionANDN, InstructionORN, InstructionXNOR, # R type
+    insns = [InstructionADDI, InstructionORI, InstructionXORI, InstructionANDI, InstructionSLLI, InstructionSRLI, InstructionSRAI, InstructionSLTI, InstructionSLTIU, InstructionRORI, InstructionREV, InstructionZIP, InstructionUNZIP,  # I type
+             InstructionADD, InstructionSUB, InstructionSLL, InstructionSLT, InstructionSLTU, InstructionXOR, InstructionSRL, InstructionSRA, InstructionOR, InstructionAND, InstructionROR, InstructionROL, InstructionANDN, InstructionORN, InstructionXNOR, InstructionPACK, InstructionPACKH, # R type
              InstructionAUIPC, InstructionLUI,  # U type
              InstructionJAL, InstructionJALR,  # Jumps
              InstructionBEQ, InstructionBNE, InstructionBLT, InstructionBGE, InstructionBLTU, InstructionBGEU]  # B type
@@ -378,20 +410,26 @@ async def test_random_instructions_low_regs(dut):
             insn = random.choice(insns)()
             insn.randomize(RV32E)
             model.issue(insn)
-            #print(f"{insn} = {model.state.intreg[insn.rd].unsigned() if hasattr(insn, 'rd') else 'N/A'}, PC {model.state.pc.unsigned()}")
+            print(f"{insn} = {model.state.intreg[insn.rd].unsigned() if hasattr(insn, 'rd') else 'N/A'}, PC {model.state.pc.unsigned()}")
 
             dut.mem_rdata.value = insn.encode()
             await ClockCycles(dut.clk, 2)
-            model.state.pc.set(model.state.pc.unsigned() & 0x3FC)
+            model.state.pc.set(model.state.pc.unsigned() & PC_MASK)
+
+            #if hasattr(insn, 'rd'):
+            #    assert await get_reg_value(dut, insn.rd) == model.state.intreg[insn.rd].unsigned()
+            #    model.state.pc.set((model.state.pc.unsigned() + 4) & PC_MASK)
+            #assert await get_pc_value(dut) == model.state.pc.unsigned()
+            #model.state.pc.set((model.state.pc.unsigned() + 4) & PC_MASK)
 
         for reg in range(1, 16):
             #print(f"  x{reg} = {model.state.intreg[reg].unsigned()}")
             assert await get_reg_value(dut, reg) == model.state.intreg[reg].unsigned()
 
-        model.state.pc.set((model.state.pc.unsigned() + (15 * 4)) & 0x3FC)
+        model.state.pc.set((model.state.pc.unsigned() + (15 * 4)) & PC_MASK)
     
         assert await get_pc_value(dut) == model.state.pc.unsigned()
-        model.state.pc.set((model.state.pc.unsigned() + 4) & 0x3FC)
+        model.state.pc.set((model.state.pc.unsigned() + 4) & PC_MASK)
 
 @cocotb.test()
 async def test_load_store(dut):

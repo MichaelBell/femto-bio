@@ -152,7 +152,7 @@ async def test_mem_access(dut):
     await ClockCycles(dut.clk, 5)
 
     assert await apb_read(dut, 0x0) == 0
-    assert await apb_read(dut, 0x4) == 0x04000280
+    assert await apb_read(dut, 0x4) == 0x08000280 # Default config 2kB, 2 cores
     assert await apb_read(dut, 0xc) == 0
     assert await apb_read(dut, 0x40) == 0x55000000
 

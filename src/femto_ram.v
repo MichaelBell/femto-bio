@@ -6,7 +6,7 @@
 `default_nettype none
 
 // 16-bit wide RAM with single read/write port, byte enables on write
-module internal_ram #(parameter RAM_WIDTH=10) (
+module internal_ram #(parameter RAM_WIDTH=11) (
     `ifdef USE_POWER_PINS_FOR_RAM
     inout  wire VDD,
     inout  wire VSS,
@@ -45,35 +45,69 @@ module internal_ram #(parameter RAM_WIDTH=10) (
     gf180mcu_as_sc_mcu7t3v3__dlybuff_2 i_cen_delay (
         .A(!rst_n), .Y(cen));
 
-    gf180mcu_ocd_ip_sram__sram512x8m8wm1 sram_0 (
-        `ifdef USE_POWER_PINS_FOR_RAM
-        .VDD  (VDD),
-        .VSS  (VSS),
-        `endif
+    generate
+        if (RAM_WIDTH == 11) begin
+            gf180mcu_ocd_ip_sram__sram1024x8m8wm1 sram_0 (
+                `ifdef USE_POWER_PINS_FOR_RAM
+                .VDD  (VDD),
+                .VSS  (VSS),
+                `endif
 
-        .CLK  (clk),
-        .CEN  (cen),
-        .GWEN (~wen[0]),
-        .WEN  (8'b0),
-        .A    (addr),
-        .D    (data_in[7:0]),
-        .Q    (data_out[7:0])
-    );
+                .CLK  (clk),
+                .CEN  (cen),
+                .GWEN (~wen[0]),
+                .WEN  (8'b0),
+                .A    (addr),
+                .D    (data_in[7:0]),
+                .Q    (data_out[7:0])
+            );
 
-    gf180mcu_ocd_ip_sram__sram512x8m8wm1 sram_1 (
-        `ifdef USE_POWER_PINS_FOR_RAM
-        .VDD  (VDD),
-        .VSS  (VSS),
-        `endif
+            gf180mcu_ocd_ip_sram__sram1024x8m8wm1 sram_1 (
+                `ifdef USE_POWER_PINS_FOR_RAM
+                .VDD  (VDD),
+                .VSS  (VSS),
+                `endif
 
-        .CLK  (clk),
-        .CEN  (cen),
-        .GWEN (~wen[1]),
-        .WEN  (8'b0),
-        .A    (addr),
-        .D    (data_in[15:8]),
-        .Q    (data_out[15:8])
-    );
+                .CLK  (clk),
+                .CEN  (cen),
+                .GWEN (~wen[1]),
+                .WEN  (8'b0),
+                .A    (addr),
+                .D    (data_in[15:8]),
+                .Q    (data_out[15:8])
+            );
+        end else if (RAM_WIDTH == 10) begin
+            gf180mcu_ocd_ip_sram__sram512x8m8wm1 sram_0 (
+                `ifdef USE_POWER_PINS_FOR_RAM
+                .VDD  (VDD),
+                .VSS  (VSS),
+                `endif
+
+                .CLK  (clk),
+                .CEN  (cen),
+                .GWEN (~wen[0]),
+                .WEN  (8'b0),
+                .A    (addr),
+                .D    (data_in[7:0]),
+                .Q    (data_out[7:0])
+            );
+
+            gf180mcu_ocd_ip_sram__sram512x8m8wm1 sram_1 (
+                `ifdef USE_POWER_PINS_FOR_RAM
+                .VDD  (VDD),
+                .VSS  (VSS),
+                `endif
+
+                .CLK  (clk),
+                .CEN  (cen),
+                .GWEN (~wen[1]),
+                .WEN  (8'b0),
+                .A    (addr),
+                .D    (data_in[15:8]),
+                .Q    (data_out[15:8])
+            );
+        end
+    endgenerate
 
 `endif
 
@@ -83,7 +117,7 @@ endmodule
 // Normally reads and writes take 2 cycles, but if idle cycles follows an instruction read the next instruction 
 // is cached so it can be fetched without additional wait.
 // Inputs must remain constant while a transaction is in progress
-module femto_ram #(parameter RAM_WIDTH=10) (
+module femto_ram #(parameter RAM_WIDTH=11) (
     `ifdef USE_POWER_PINS_FOR_RAM
     inout  wire VDD,
     inout  wire VSS,

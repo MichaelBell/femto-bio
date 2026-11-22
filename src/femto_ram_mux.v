@@ -3,7 +3,7 @@
    
    RAM mux for APB/core access to Femto RAM */
 
-module femto_ram_mux #(parameter RAM_WIDTH=10) (
+module femto_ram_mux #(parameter RAM_WIDTH=11) (
     input clk,
     input rst_n,
 

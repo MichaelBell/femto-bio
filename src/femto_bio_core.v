@@ -6,7 +6,7 @@
 
 `default_nettype none
 
-module femto_bio_core #(parameter RAM_WIDTH=10, CORE_ID=0) (
+module femto_bio_core #(parameter RAM_WIDTH=11, CORE_ID=0) (
     `ifdef USE_POWER_PINS_FOR_RAM
     inout  wire VDD,
     inout  wire VSS,
