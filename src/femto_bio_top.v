@@ -18,7 +18,7 @@
 // 0xF000 - 0xFFFF: Core 3 memory
 
 module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
-    `ifdef USE_POWER_PINS
+    `ifdef USE_POWER_PINS_FOR_RAM
     inout  wire VDD,
     inout  wire VSS,
     `endif
@@ -89,7 +89,7 @@ module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
     generate
     for(k = 0; k < NUM_CORES; k = k + 1) begin: cores
         femto_bio_core #(.RAM_WIDTH(RAM_WIDTH), .CORE_ID(k)) i_femto_bio_core (
-        `ifdef USE_POWER_PINS
+        `ifdef USE_POWER_PINS_FOR_RAM
         .VDD  (VDD),
         .VSS  (VSS),
         `endif
@@ -266,16 +266,20 @@ module femto_bio #(parameter RAM_WIDTH=10, parameter NUM_CORES=2) (
         /* verilator lint_on WIDTHEXPAND */
     end
 
+    reg [31:0] prdata_from_cores;
     always @(*) begin
-        prdata_r = 32'b0;
+        prdata_from_cores = 32'b0;
+        for (i = NUM_CORES-1; i >= 0; i = i - 1) begin
+            if (core_addr[i])
+                prdata_from_cores = prdata_core[i];
+        end
+    end
+
+    always @(*) begin
         if (config_addr)
             prdata_r = prdata_config;
-        else begin
-            for (i = NUM_CORES-1; i >= 0; i = i - 1) begin
-                if (core_addr[i])
-                    prdata_r = prdata_core[i];
-            end
-        end
+        else 
+            prdata_r = prdata_from_cores;
     end
 
     generate

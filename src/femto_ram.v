@@ -7,7 +7,7 @@
 
 // 16-bit wide RAM with single read/write port, byte enables on write
 module internal_ram #(parameter RAM_WIDTH=10) (
-    `ifdef USE_POWER_PINS
+    `ifdef USE_POWER_PINS_FOR_RAM
     inout  wire VDD,
     inout  wire VSS,
     `endif
@@ -43,15 +43,10 @@ module internal_ram #(parameter RAM_WIDTH=10) (
 
     wire cen;
     gf180mcu_as_sc_mcu7t3v3__dlybuff_2 i_cen_delay (
-        `ifdef USE_POWER_PINS
-        .VDD  (VDD),
-        .VSS  (VSS),
-        `endif
-        
         .A(!rst_n), .Y(cen));
 
     gf180mcu_ocd_ip_sram__sram512x8m8wm1 sram_0 (
-        `ifdef USE_POWER_PINS
+        `ifdef USE_POWER_PINS_FOR_RAM
         .VDD  (VDD),
         .VSS  (VSS),
         `endif
@@ -66,7 +61,7 @@ module internal_ram #(parameter RAM_WIDTH=10) (
     );
 
     gf180mcu_ocd_ip_sram__sram512x8m8wm1 sram_1 (
-        `ifdef USE_POWER_PINS
+        `ifdef USE_POWER_PINS_FOR_RAM
         .VDD  (VDD),
         .VSS  (VSS),
         `endif
@@ -89,7 +84,7 @@ endmodule
 // is cached so it can be fetched without additional wait.
 // Inputs must remain constant while a transaction is in progress
 module femto_ram #(parameter RAM_WIDTH=10) (
-    `ifdef USE_POWER_PINS
+    `ifdef USE_POWER_PINS_FOR_RAM
     inout  wire VDD,
     inout  wire VSS,
     `endif
@@ -334,7 +329,7 @@ module femto_ram #(parameter RAM_WIDTH=10) (
     end
 
     internal_ram #(.RAM_WIDTH(RAM_WIDTH)) i_ram(
-        `ifdef USE_POWER_PINS
+        `ifdef USE_POWER_PINS_FOR_RAM
         .VDD  (VDD),
         .VSS  (VSS),
         `endif
